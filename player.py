@@ -2,6 +2,8 @@ import chess
 import chess.engine
 from positions import PIECES_MAP
 from typing import Optional
+from collections import defaultdict
+from evaluation import evaluate
 
 META = 1000000
 
@@ -9,8 +11,10 @@ class Searcher():
     def __init__(self, board: chess.Board, evaluation):
         self.board = board
         self.evaluate = evaluation
-        self.tt = {}
-
+        self.tt = defaultdict(dict)
+        self.nodes = 0
+        self.tt_hits = 0
+        self.tt_lookups = 0 
 
     def search(self, max_depth: int):
         """Iterative deepening — returns (best_score, best_move)."""
@@ -20,7 +24,6 @@ class Searcher():
 
         for depth in range(1, max_depth + 1):
             best_score, best_move = self._get_best_move(depth)
-
         return best_score, best_move
 
 
@@ -45,6 +48,8 @@ class Searcher():
                 best_move = move
                 alpha = max(alpha, score)
 
+        
+        
         return best_score, best_move
 
 
@@ -52,7 +57,8 @@ class Searcher():
         """Alpha-beta negamax. Returns a score only."""
         if self.board.is_game_over():
             return self._terminal_score(ply)
-
+        if self.board.is_repetition():
+            return -10
         if depth == 0:
             return self.quiesce(alpha, beta, ply)
 
@@ -60,30 +66,31 @@ class Searcher():
         cached = self._tt_lookup(key, alpha, beta)
         if cached is not None:
             return cached
-
+        self.nodes += 1
         orig_alpha = alpha
         best_value = float("-inf")
-
+        best_move = None
         for move in self._sorted_moves(list(self.board.legal_moves)):
             self.board.push(move)
             value = -self.minmax(-beta, -alpha, depth - 1, ply + 1)
             self.board.pop()
-
             if value > best_value:
                 best_value = value
+                best_move = move
                 alpha = max(alpha, value)
 
             if best_value >= beta:
                 break
 
-        self.tt[key] = (best_value, orig_alpha, beta)
+        self.tt[key[0]][key[1]] = (best_value,best_move, orig_alpha, beta)
         return best_value
 
     def quiesce(self, alpha: float, beta: float, ply: int) -> float:
         """Quiescence search. Returns a score only."""
         if self.board.is_game_over():
             return self._terminal_score(ply)
-
+        if self.board.is_repetition():
+            return -10
         key = (self.board._transposition_key(), ply)
         cached = self._tt_lookup(key, alpha, beta)
         if cached is not None:
@@ -100,6 +107,7 @@ class Searcher():
                 return stand_pat
             alpha = max(alpha, stand_pat)
             best_value = stand_pat
+            best_move = None
             moves = [m for m in self.board.legal_moves
                      if self.board.is_capture(m) or m.promotion]
 
@@ -107,15 +115,16 @@ class Searcher():
             self.board.push(move)
             value = -self.quiesce(-beta, -alpha, ply + 1)
             self.board.pop()
-
+            self.nodes += 1
             if value > best_value:
                 best_value = value
+                best_move = move
                 alpha = max(alpha, best_value)
 
             if alpha >= beta:
                 break
 
-        self.tt[key] = (best_value, orig_alpha, beta)
+        self.tt[key[0]][key[1]] = (best_value,best_move , orig_alpha, beta)
         return best_value
 
 
@@ -125,20 +134,38 @@ class Searcher():
         Entries are stored as (value, lo, hi) where lo/hi are the
         alpha/beta bounds the value was searched under.
         """
-        if key not in self.tt:
+        self.tt_lookups += 1
+        if key[0] not in self.tt:
             return None
-        value, lo, hi = self.tt[key]
+        depth = max(self.tt[key[0]].keys())
+        if key[1] > depth:
+            return None
+        value,_, lo, hi = self.tt[key[0]][depth]
         if lo <= value <= hi and lo >= alpha and hi <= beta:
+            self.tt_hits += 1
             return value
+        
         if value >= beta:
+            self.tt_hits += 1
             return value
+        
         if value <= alpha:
+            self.tt_hits += 1
             return value
+        
         return None
 
 
     def _sorted_moves(self, moves):
-        return sorted(moves, key=self._move_tactical_score, reverse=True)
+        best_move = None
+        if self.board._transposition_key() in self.tt:
+             depth = max(self.tt[self.board._transposition_key()].keys())
+             best_move = self.tt[self.board._transposition_key()][depth][1]
+        return sorted(moves, key = lambda m: (
+                    m == best_move,
+                    self._move_tactical_score(m)
+                ), reverse=True)
+        # return sorted(moves, key=self._move_tactical_score, reverse=True)
 
     def _capture_score(self, move) -> int:
         victim = self.board.piece_at(move.to_square)
@@ -150,13 +177,19 @@ class Searcher():
         return 100 * piece_values[victim.piece_type] - piece_values[attacker.piece_type]
 
     def _move_tactical_score(self, move) -> int:
+        # self.board.push(move)
+        # score = self._tt_lookup((self.board._transposition_key(), 2), -META, META)
+        # self.board.pop()
+        # if score:
+        #     return score
+        score = 0
         if self.board.is_capture(move):
-            return self._capture_score(move)
+            score += self._capture_score(move)
         if move.promotion:
-            return 1000 + (move.promotion == chess.QUEEN) * 900
+            score += 100 + (move.promotion == chess.QUEEN) * 90
         if self.board.gives_check(move):
-            return 800
-        return 0
+            score +=  80
+        return score
 
 
     def _terminal_score(self, ply: int) -> float:
@@ -164,42 +197,22 @@ class Searcher():
             return -META + ply
         if self.board.is_variant_win():
             return META - ply
+        if self.board.can_claim_threefold_repetition():
+           return -1 
         return 0            
         
-def evaluate(board:chess.Board):
-    if board.is_game_over():
-        outcome = board.outcome()
-        
-        if outcome is not None:
-            if outcome.winner == chess.WHITE:
-                return META
-            elif outcome.winner == chess.BLACK:
-                return -META
-            else:
-                return 0
-    piece_values = {
-    chess.PAWN: 100,
-    chess.ROOK: 500,
-    chess.KNIGHT: 320,
-    chess.BISHOP: 330,
-    chess.QUEEN: 900,
-    chess.KING: 20000
-    }
-    score = 0
-    
-    for square, piece in board.piece_map().items():
-        value = piece_values[piece.piece_type]
 
-        if piece.color == chess.WHITE:
-            score += value
-            score += PIECES_MAP[piece.piece_type][square]
-        else:
-            score -= value
-            score -= PIECES_MAP[piece.piece_type][chess.square_mirror(square)]
-
-    return score if board.turn == chess.WHITE else -score
 
 
 if __name__ == "__main__":
-    board = chess.Board("1Qbqkbr1/1ppppppp/8/5P2/8/5N2/PPP2PPP/RNB1KB1R b KQ - 0 7")
-    print(Searcher(board, evaluate).minmax())
+    # board = chess.Board()
+    # searcher = Searcher(board)
+    board = chess.Board()
+    searcher = Searcher(board, evaluate)
+    sum = 0
+    while not board.is_game_over():
+        _, move = searcher.search(6)
+        board.push(move)
+        sum += searcher.nodes
+        searcher.nodes = 0 
+    print(sum)

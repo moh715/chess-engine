@@ -1,6 +1,7 @@
 import pygame
 import chess
-from player import Searcher, evaluate
+from player import Searcher
+from evaluation import evaluate
 
 # -------------------------
 # Your Searcher class here
@@ -138,7 +139,7 @@ while running:
 
                     print("Engine thinking...")
 
-                    score, pv = searcher.search(4)
+                    score, pv = searcher.search(5)
 
                     print("Score:", score)
                     print("PV:", pv)
