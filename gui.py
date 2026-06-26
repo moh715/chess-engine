@@ -22,7 +22,7 @@ pygame.display.set_caption("Play Against Your Engine")
 font = pygame.font.SysFont("segoeuisymbol", 60)
 
 board = chess.Board()
-
+depth = 6
 searcher = Searcher(board, evaluate)
 
 selected = None
@@ -139,7 +139,7 @@ while running:
 
                     print("Engine thinking...")
 
-                    score, pv = searcher.search(4)
+                    score, pv = searcher.search(depth)
 
                     print("Score:", score)
                     print("PV:", pv)
