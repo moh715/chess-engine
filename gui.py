@@ -22,8 +22,8 @@ pygame.display.set_caption("Play Against Your Engine")
 font = pygame.font.SysFont("segoeuisymbol", 60)
 
 board = chess.Board()
-depth = 6
-searcher = Searcher(board, evaluate)
+depth = 3
+searcher = Searcher(board, evaluate2)
 
 selected = None
 

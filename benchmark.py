@@ -1,148 +1,253 @@
+import random
 import time
 
 import chess
 
-import random
-from player import Searcher
 from evaluation import evaluate, evaluate2
+from player import Searcher
 
-board = chess.Board()
+ran = random.Random(42)
 
-searcher = Searcher(board, evaluate)
+def random_position(max_plies=20):
+    board = chess.Board()
 
-start = time.perf_counter()
+    n = ran.randint(8, max_plies)
 
-score, move = searcher.search(8)
+    for _ in range(n):
+        if board.is_game_over():
+            break
 
-elapsed = time.perf_counter() - start
+        move = ran.choice(list(board.legal_moves))
+        board.push(move)
 
-print("Best move:", move)
-print("Score:", score)
-print("Time:", round(elapsed, 3), "seconds")
-searcher.print_profile()
-
-if searcher.tt_lookups:
-    print("TT hit rate:", round(100 * searcher.tt_hits / searcher.tt_lookups, 2), "%")
-# pieces = {
-#         chess.PAWN,
-#         chess.ROOK,
-#         chess.KNIGHT,
-#         chess.BISHOP,
-#         chess.QUEEN,
-#         chess.KING
-#     }
-# GAMES = 20
-# DEPTH = 5
-
-# eval1_wins = 0
-# eval2_wins = 0
-# draws = 0
-
-# def pieces_count(board):
-#     white = {}
-#     black = {}
-#     for p in pieces:
-        
-#         white[p] =   len(board.pieces(p, chess.WHITE))
-#         black[p] = len(board.pieces(p, chess.BLACK))
-#     return white, black
+    return board
 
     
-# def random_position(max_plies=20):
-#     board = chess.Board()
+def single_move_benchmark(depth):
+    board = chess.Board("2b1kbnr/4r2p/p1Rp2pq/1P2pp2/2BPPBP1/2Pn4/1PK1NP1R/3Q2N1 w k - 4 18")
 
-#     n = random.randint(8, max_plies)
+    searcher = Searcher(board, evaluate)
 
-#     for _ in range(n):
-#         if board.is_game_over():
-#             break
+    start = time.perf_counter()
 
-#         move = random.choice(list(board.legal_moves))
-#         board.push(move)
+    score, move = searcher.search(depth)
 
-#     return board
-# test_pos = [chess.Board("q7/1k6/8/8/8/8/8/4K3 w - - 0 1")]
-# for game_num in range(1):
-#     board = test_pos[game_num]
+    elapsed = time.perf_counter() - start
 
-#     # Alternate colors
-#     if game_num % 2 == 0:
-#         white_eval = evaluate
-#         black_eval = evaluate
-#         eval1_is_white = True
-#     else:
-#         white_eval = evaluate
-#         black_eval = evaluate
-#         eval1_is_white = False
+    print("Best move:", move)
+    print("Score:", score)
+    print("Time:", round(elapsed, 3), "seconds")
+    searcher.print_profile()
 
-#     move_count = 0
-#     white_searcher = Searcher(board, white_eval) 
-#     black_searcher = Searcher(board, black_eval)
-#     while not board.is_game_over():
-#         if board.turn == chess.WHITE:
-#             _, move = white_searcher.search(DEPTH)
-#         else:
-#             _, move = black_searcher.search(DEPTH)
-#         if move is None:
-#             break
+    if searcher.tt_lookups:
+        print("TT hit rate:", round(100 * searcher.tt_hits / searcher.tt_lookups, 2), "%")
 
-#         board.push(move)
-#         move_count += 1
 
-#     outcome = board.outcome()
+def game_benchmark(depth=4):
+    board = chess.Board()
+    searcher = Searcher(board, evaluate)
+    start = time.perf_counter()
+    moves = 0
+    while not board.is_game_over():
+        moves += 1
+        _, move = searcher.search(depth)
+        board.push(move)
+    print("time: ", round(time.perf_counter() - start, 3), "s")
+    print(f"moves: {moves}")
+    searcher.print_profile()
+    
+def multi_fen_benchmark(depth):
+    test_fens = [random_position(50) for _ in range(50)]
 
-#     if outcome is None or outcome.winner is None:
-#         draws += 1
-        
-#         if outcome is None:
-#             print("Unknown result")
-#         elif outcome.winner is None:
-#             print("Draw:", outcome.termination)
-#             white, black = pieces_count(board)
-#             eval1_count = white if eval1_is_white else black
-#             eval2_count = black if eval1_is_white else white
-#             print(f"eval1:{eval1_count}")
-#             print(f"eval2:{eval2_count}")
-#             print(f"fen: {board.fen()}")
-#             print(f"white is eval1:{eval1_is_white}")
-#             turn = "white" if board.turn == chess.WHITE else "black"
-#             print(f"turn: {turn}")
-#             print(f"eval1: {evaluate(board)}")
-#             print(f"eval2: {evaluate2(board)}")
-            
-#     elif outcome.winner == chess.WHITE:
-#         if eval1_is_white:
-#             eval1_wins += 1
-#         else:
-#             eval2_wins += 1
+    total_time = 0.0
+    moves = []
+    scores = []
 
-#     else:  # Black won
-#         if eval1_is_white:
-#             eval2_wins += 1
-#         else:
-#             eval1_wins += 1
+    totals = {
+        "nodes": 0,
+        "tt_hits": 0,
+        "tt_lookups": 0,
+        "beta_cutof": 0,
+        "aspr_fail": 0,
+        "time_sort": 0.0,
+        "time_eval": 0.0,
+        "time_quiesce": 0.0,
+        "time_tt": 0.0,
+    }
 
-#     print(
-#         f"Game {game_num + 1}/{GAMES} | "
-#         f"Eval1: {eval1_wins}  "
-#         f"Eval2: {eval2_wins}  "
-#         f"Draws: {draws}"
-#     )
+    for board in test_fens:
+        print("fen:", board.fen())
 
-# print("\nFINAL RESULTS")
-# print("Eval1 wins:", eval1_wins)
-# print("Eval2 wins:", eval2_wins)
-# print("Draws:", draws)
+        searcher = Searcher(board, evaluate)
 
-# total_decisive = eval1_wins + eval2_wins
-# if total_decisive:
-#     print(
-#         "Eval1 score:",
-#         round((eval1_wins + draws * 0.5) / GAMES * 100, 1),
-#         "%"
-#     )
-#     print(
-#         "Eval2 score:",
-#         round((eval2_wins + draws * 0.5) / GAMES * 100, 1),
-#         "%"
-#     )
+        start = time.perf_counter()
+        score, move = searcher.search(depth)
+        elapsed = time.perf_counter() - start
+
+        total_time += elapsed
+        moves.append(move)
+        scores.append(score)
+
+        totals["nodes"] += searcher.nodes
+        totals["tt_hits"] += searcher.tt_hits
+        totals["tt_lookups"] += searcher.tt_lookups
+        totals["beta_cutof"] += searcher.beta_cutof
+        totals["aspr_fail"] += searcher.aspr_fail
+        totals["time_sort"] += searcher.time_sort
+        totals["time_eval"] += searcher.time_eval
+        totals["time_quiesce"] += searcher.time_quiesce
+        totals["time_tt"] += searcher.time_tt
+
+        print(
+            f"Best move: {move}  "
+            f"Score: {score}  "
+            f"Time: {elapsed:.3f} seconds"
+        )
+
+    n = len(test_fens)
+
+    print("=" * 50)
+    print(f"Total time   : {total_time:.3f} s")
+    print(f"Average time : {total_time / n:.3f} s")
+    print()
+
+    print("Totals")
+    print(f"Nodes        : {totals['nodes']:,}")
+    print(f"TT hits      : {totals['tt_hits']:,}")
+    print(f"TT lookups   : {totals['tt_lookups']:,}")
+    print(f"Beta cutoffs : {totals['beta_cutof']:,}")
+    print(f"Aspiration fails : {totals['aspr_fail']:,}")
+    print(f"Sort time    : {totals['time_sort']:.3f} s")
+    print(f"Eval time    : {totals['time_eval']:.3f} s")
+    print(f"Quiesce time : {totals['time_quiesce']:.3f} s")
+    print(f"TT time      : {totals['time_tt']:.3f} s")
+    print(f"NPS: {totals['nodes'] / total_time:.0f}")
+    print(f"TT hit rate: {100 * totals['tt_hits'] / totals['tt_lookups']:.2f}%")
+    print(f"Beta cutoff rate: {100 * totals['beta_cutof'] / totals['nodes']:.2f}%")
+    print()
+    print("Averages")
+    print(f"Nodes        : {totals['nodes'] / n:.1f}")
+    print(f"TT hits      : {totals['tt_hits'] / n:.1f}")
+    print(f"TT lookups   : {totals['tt_lookups'] / n:.1f}")
+    print(f"Beta cutoffs : {totals['beta_cutof'] / n:.1f}")
+    print(f"Aspiration fails : {totals['aspr_fail'] / n:.2f}")
+    print(f"Sort time    : {totals['time_sort'] / n:.4f} s")
+    print(f"Eval time    : {totals['time_eval'] / n:.4f} s")
+    print(f"Quiesce time : {totals['time_quiesce'] / n:.4f} s")
+    print(f"TT time      : {totals['time_tt'] / n:.4f} s")
+
+    print()
+    print("Moves:", moves)
+# multi_fen_benchmark(5)
+# single_move_benchmark(5)
+pieces ={
+        chess.PAWN,
+        chess.ROOK,
+        chess.KNIGHT,
+        chess.BISHOP,
+        chess.QUEEN,
+        chess.KING
+    }
+GAMES = 50
+DEPTH = 2
+
+eval1_wins = 0
+eval2_wins = 0
+draws = 0
+
+def pieces_count(board):
+    white = {}
+    black = {}
+    for p in pieces:
+
+        white[p] =   len(board.pieces(p, chess.WHITE))
+        black[p] = len(board.pieces(p, chess.BLACK))
+    return white, black
+
+
+test_pos = [random_position() for _ in range(GAMES)]
+for game_num in range(GAMES):
+    board = test_pos[game_num]
+
+    # Alternate colors
+    if game_num % 2 == 0:
+        white_eval = evaluate2
+        black_eval = evaluate 
+        eval1_is_white = True
+    else:
+        white_eval = evaluate
+        black_eval = evaluate2
+        eval1_is_white = False
+
+    move_count = 0
+    white_searcher = Searcher(board, white_eval)
+    black_searcher = Searcher(board, black_eval)
+    while not board.is_game_over():
+        if board.turn == chess.WHITE:
+            _, move = white_searcher.search(DEPTH)
+        else:
+            _, move = black_searcher.search(DEPTH)
+        if move is None:
+            break
+
+        board.push(move)
+        move_count += 1
+
+    outcome = board.outcome()
+
+    if outcome is None or outcome.winner is None:
+        draws += 1
+
+        if outcome is None:
+            print("Unknown result")
+        elif outcome.winner is None:
+            print("Draw:", outcome.termination)
+            white, black = pieces_count(board)
+            eval1_count = white if eval1_is_white else black
+            eval2_count = black if eval1_is_white else white
+            print(f"eval1:{eval1_count}")
+            print(f"eval2:{eval2_count}")
+            print(f"fen: {board.fen()}")
+            print(f"white is eval1:{eval1_is_white}")
+            turn = "white" if board.turn == chess.WHITE else "black"
+            print(f"turn: {turn}")
+            print(f"eval1: {evaluate(board)}")
+            print(f"eval2: {evaluate2(board)}")
+
+    elif outcome.winner == chess.WHITE:
+        if eval1_is_white:
+            eval1_wins += 1
+        else:
+            eval2_wins += 1
+
+    else:  # Black won
+        if eval1_is_white:
+            eval2_wins += 1
+        else:
+            eval1_wins += 1
+
+    print(
+        f"Game {game_num + 1}/{GAMES} | "
+        f"Eval1: {eval1_wins}  "
+        f"Eval2: {eval2_wins}  "
+        f"Draws: {draws}"
+    )
+
+print("\nFINAL RESULTS")
+print("Eval1 wins:", eval1_wins)
+print("Eval2 wins:", eval2_wins)
+print("Draws:", draws)
+
+total_decisive = eval1_wins + eval2_wins
+if total_decisive:
+    print(
+        "Eval1 score:",
+        round((eval1_wins + draws * 0.5) / GAMES * 100, 1),
+        "%"
+    )
+    print(
+        "Eval2 score:",
+        round((eval2_wins + draws * 0.5) / GAMES * 100, 1),
+        "%"
+    )
+# [Move.from_uci('d4d5'), Move.from_uci('f1d3'), Move.from_uci('b4a5'), Move.from_uci('a5a1'), Move.from_uci('c2d1'), Move.from_uci('b1c3'), Move.from_uci('g1f3'), Move.from_uci('h1h3'), Move.from_uci('b7a8q'), Move.from_uci('f1e2'), Move.from_uci('d6d8'), Move.from_uci('g4f6'), Move.from_uci('e6f7'), Move.from_uci('h1h3'), Move.from_uci('e4f5'), Move.from_uci('h6g7'), Move.from_uci('b8a6'), Move.from_uci('d5c4'), Move.from_uci('c5b7'), Move.from_uci('h4g5'), Move.from_uci('g5f3'), Move.from_uci('e3f3'), Move.from_uci('c4b5'), Move.from_uci('b1c3'), Move.from_uci('f4h6'), Move.from_uci('c5c6'), Move.from_uci('c7d8'), Move.from_uci('e1a5'), Move.from_uci('a1a4'), Move.from_uci('f3g4'), Move.from_uci('f4g3'), Move.from_uci('g4c4'), Move.from_uci('b3a4'), Move.from_uci('g5g4'), Move.from_uci('e5f4'), Move.from_uci('e4d3'), Move.from_uci('b7a8'), Move.from_uci('e6f7'), Move.from_uci('c6b6'), Move.from_uci('g8f6'), Move.from_uci('a6c7'), Move.from_uci('d6e5'), Move.from_uci('e7d6'), Move.from_uci('h6c1'), Move.from_uci('e4h1'), Move.from_uci('e4f5'), Move.from_uci('a4b6'), Move.from_uci('a3c4'), Move.from_uci('f8h6'), Move.from_uci('b1b3')]

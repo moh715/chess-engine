@@ -5,6 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "cython-chess>=0.3",
+    "numpy>=2.5.0",
     "pygame>=2.6.1",
     "python-chess>=1.999",
+    "tensorflow>=2.21.0",
 ]
