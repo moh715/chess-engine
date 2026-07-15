@@ -63,9 +63,11 @@ def evaluate(board: chess.Board):
 
 
 def evaluate2(board: chess.Board):
-    x = np.expand_dims(board_to_vector(board.fen()), axis=0)
-    out =  float(model(x, training=False)[0, 0])
-    return out + evaluate(board)
+    us_idx, them_idx = board_to_halfkp(board.fen())
+    us_idx = pad_indices(us_idx)[None, :]
+    them_idx = pad_indices(them_idx)[None, :]
+    out = float(model({"us_idx":us_idx, "them_idx":them_idx}, training = False)[0,0])
+    return out 
    
 
 
@@ -99,3 +101,58 @@ def board_to_vector(fen):
 
     return x
 
+
+PIECE_CHAR_TO_TYPE = {'p': 0, 'n': 1, 'b': 2, 'r': 3, 'q': 4}
+
+def parse_fen_fast(fen):
+    placement, turn = fen.split(' ', 2)[:2]
+    pieces = []
+    king_sq = [None, None]
+
+    rank, file = 7, 0
+    for ch in placement:
+        if ch == '/':
+            rank -= 1
+            file = 0
+        elif ch.isdigit():
+            file += int(ch)
+        else:
+            is_white = ch.isupper()
+            square = rank * 8 + file
+            if ch.lower() == 'k':
+                king_sq[is_white] = square
+            else:
+                pieces.append((square, PIECE_CHAR_TO_TYPE[ch.lower()], is_white))
+            file += 1
+
+    us_is_white = (turn == 'w')
+    return pieces, king_sq, us_is_white
+
+def mirror_sq(square):
+    return square ^ 56
+
+def orient(square, perspective_is_white):
+    return square if perspective_is_white else mirror_sq(square)
+
+def halfkp_from_parsed(pieces, king_sq, perspective_is_white):
+    k = orient(king_sq[perspective_is_white], perspective_is_white)
+    indices = []
+    for square, ptype, is_white in pieces:
+        relative = 0 if is_white == perspective_is_white else 1
+        p_idx = relative * 5 + ptype
+        sq = orient(square, perspective_is_white)
+        indices.append(k * 640 + p_idx * 64 + sq)
+    return indices
+
+def board_to_halfkp(fen):
+    pieces, king_sq, us_is_white = parse_fen_fast(fen)
+    us_idx = halfkp_from_parsed(pieces, king_sq, us_is_white)
+    them_idx = halfkp_from_parsed(pieces, king_sq, not us_is_white)
+    return np.array(us_idx, dtype=np.int32), np.array(them_idx, dtype=np.int32)
+
+MAX_PIECES = 32
+
+def pad_indices(idx):
+    padded = np.full(MAX_PIECES, -1, dtype=np.int32)
+    padded[:len(idx)] = idx
+    return padded
