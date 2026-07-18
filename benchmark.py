@@ -248,5 +248,34 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
             round((eval2_wins + draws * 0.5) / games * 100, 1),
             "%"
         )
-eval_vs_eval2(2, 10)
-# multi_fen_benchmark(3, NNEvaluation())
+# eval_vs_eval2(2, 10)
+multi_fen_benchmark(3, Handcrafted)
+# Total time   : 47.562 s
+# Average time : 0.951 s
+
+# Totals
+# Nodes        : 614,333
+# TT hits      : 27,190
+# TT lookups   : 614,286
+# Beta cutoffs : 189,043
+# Aspiration fails : 30
+# Sort time    : 0.044 s
+# Eval time    : 7.897 s
+# Quiesce time : 45.981 s
+# TT time      : 0.641 s
+# NPS: 12917
+# TT hit rate: 4.43%
+# Beta cutoff rate: 30.77%
+
+# Averages
+# Nodes        : 12286.7
+# TT hits      : 543.8
+# TT lookups   : 12285.7
+# Beta cutoffs : 3780.9
+# Aspiration fails : 0.60
+# Sort time    : 0.0009 s
+# Eval time    : 0.1579 s
+# Quiesce time : 0.9196 s
+# TT time      : 0.0128 s
+
+# Moves: [<Move: c5b6>, <Move: a4b5>, <Move: b4b5>, <Move: c4d3>, <Move: e3f1>, <Move: a4e4>, <Move: g3g5>, <Move: b6b3>, <Move: f1e2>, <Move: c5d6>, <Move: h6g5>, <Move: f1e2>, <Move: g4h3>, <Move: b3b1>, <Move: c5b4>, <Move: g1f3>, <Move: e5f3>, <Move: c2b3>, <Move: b1c3>, <Move: c3a4>, <Move: g4g3>, <Move: f1e2>, <Move: b5a4>, <Move: d4c2>, <Move: g8f6>, <Move: f4d6>, <Move: f6h4>, <Move: c1b2>, <Move: c4d3>, <Move: a6b6>, <Move: g2f3>, <Move: b7h1>, <Move: d7d6>, <Move: d8d4>, <Move: c1a3>, <Move: d6e5>, <Move: e6g7>, <Move: b6c5>, <Move: b4c2>, <Move: b5c4>, <Move: d1e1>, <Move: f6d5>, <Move: b4c5>, <Move: b5c4>, <Move: f6f8>, <Move: g8f6>, <Move: c8g4>, <Move: h6f7>, <Move: g1h3>, <Move: e6f5>]

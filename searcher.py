@@ -498,21 +498,21 @@ class Searcher():
 
 
 
-import cProfile
-import pstats
+# import cProfile
+# import pstats
 
-board = chess.Board()
-def benchmark():
-    searcher = Searcher(board, Handcrafted())
-    print(searcher.search(8))
+# board = chess.Board()
+# def benchmark():
+#     searcher = Searcher(board, Handcrafted())
+#     print(searcher.search(8))
 
-profiler = cProfile.Profile()
-profiler.enable()
+# profiler = cProfile.Profile()
+# profiler.enable()
 
-benchmark()
+# benchmark()
 
-profiler.disable()
+# profiler.disable()
 
-stats = pstats.Stats(profiler)
-stats.sort_stats("cumtime")
-stats.print_stats(25)
+# stats = pstats.Stats(profiler)
+# stats.sort_stats("cumtime")
+# stats.print_stats(25)
