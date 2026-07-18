@@ -3,7 +3,7 @@ import time
 
 import chess
 
-from evaluation import evaluate, evaluate2
+from evaluation import Handcrafted, NNEvaluation
 from searcher import Searcher
 
 ran = random.Random(42)
@@ -23,10 +23,10 @@ def random_position(max_plies=20):
     return board
 
     
-def single_move_benchmark(depth, eval=evaluate):
+def single_move_benchmark(depth, eval):
     board = chess.Board("2b1kbnr/4r2p/p1Rp2pq/1P2pp2/2BPPBP1/2Pn4/1PK1NP1R/3Q2N1 w k - 4 18")
 
-    searcher = Searcher(board, eval)
+    searcher = Searcher(board, eval())
 
     start = time.perf_counter()
 
@@ -43,9 +43,9 @@ def single_move_benchmark(depth, eval=evaluate):
         print("TT hit rate:", round(100 * searcher.tt_hits / searcher.tt_lookups, 2), "%")
 
 
-def game_benchmark(depth=4, eval=evaluate):
+def game_benchmark(depth, eval):
     board = chess.Board()
-    searcher = Searcher(board, eval)
+    searcher = Searcher(board, eval())
     start = time.perf_counter()
     moves = 0
     while not board.is_game_over():
@@ -56,7 +56,7 @@ def game_benchmark(depth=4, eval=evaluate):
     print(f"moves: {moves}")
     searcher.print_profile()
     
-def multi_fen_benchmark(depth):
+def multi_fen_benchmark(depth, eval):
     test_fens = [random_position(50) for _ in range(50)]
 
     total_time = 0.0
@@ -78,7 +78,7 @@ def multi_fen_benchmark(depth):
     for board in test_fens:
         print("fen:", board.fen())
 
-        searcher = Searcher(board, evaluate)
+        searcher = Searcher(board, eval())
 
         start = time.perf_counter()
         score, move = searcher.search(depth)
@@ -139,7 +139,7 @@ def multi_fen_benchmark(depth):
     print()
     print("Moves:", moves)
 
-def eval_vs_eval2():
+def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
     pieces ={
             chess.PAWN,
             chess.ROOK,
@@ -148,8 +148,6 @@ def eval_vs_eval2():
             chess.QUEEN,
             chess.KING
         }
-    GAMES = 50
-    DEPTH = 2
     
     eval1_wins = 0
     eval2_wins = 0
@@ -165,18 +163,18 @@ def eval_vs_eval2():
         return white, black
     
     
-    test_pos = [random_position() for _ in range(GAMES)]
-    for game_num in range(GAMES):
+    test_pos = [random_position() for _ in range(games)]
+    for game_num in range(games):
         board = test_pos[game_num]
     
         # Alternate colors
         if game_num % 2 == 0:
-            white_eval = evaluate
-            black_eval = evaluate2 
+            white_eval = eval_fns[0]()
+            black_eval = eval_fns[1]() 
             eval1_is_white = True
         else:
-            white_eval = evaluate2
-            black_eval = evaluate
+            white_eval = eval_fns[1]()
+            black_eval = eval_fns[0]()
             eval1_is_white = False
     
         move_count = 0
@@ -184,9 +182,9 @@ def eval_vs_eval2():
         black_searcher = Searcher(board, black_eval)
         while not board.is_game_over():
             if board.turn == chess.WHITE:
-                _, move = white_searcher.search(DEPTH)
+                _, move = white_searcher.search(depth)
             else:
-                _, move = black_searcher.search(DEPTH)
+                _, move = black_searcher.search(depth)
             if move is None:
                 break
     
@@ -227,7 +225,7 @@ def eval_vs_eval2():
                 eval1_wins += 1
     
         print(
-            f"Game {game_num + 1}/{GAMES} | "
+            f"Game {game_num + 1}/{games} | "
             f"Eval1: {eval1_wins}  "
             f"Eval2: {eval2_wins}  "
             f"Draws: {draws}"
@@ -242,11 +240,13 @@ def eval_vs_eval2():
     if total_decisive:
         print(
             "Eval1 score:",
-            round((eval1_wins + draws * 0.5) / GAMES * 100, 1),
+            round((eval1_wins + draws * 0.5) / games * 100, 1),
             "%"
         )
         print(
             "Eval2 score:",
-            round((eval2_wins + draws * 0.5) / GAMES * 100, 1),
+            round((eval2_wins + draws * 0.5) / games * 100, 1),
             "%"
         )
+eval_vs_eval2(2, 10)
+# multi_fen_benchmark(3, NNEvaluation())

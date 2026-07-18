@@ -13,11 +13,8 @@ Requires: pygame, python-chess, and your own player.py / evaluation.py
 import pygame
 import chess
 from searcher import Searcher
-from evaluation import evaluate, evaluate2
+from evaluation import Handcrafted, NNEvaluation
 
-# ---------------------------------------------------------------------------
-# Clipboard helper (tries pyperclip, falls back to tkinter, then just prints)
-# ---------------------------------------------------------------------------
 def copy_to_clipboard(text):
     try:
         import pyperclip
@@ -76,8 +73,8 @@ PIECES = {
 }
 
 EVAL_FUNCS = {
-    "evaluate": evaluate,
-    "evaluate2": evaluate2,
+    "handcrafted evaluation": Handcrafted,
+    "NN Evaluation": NNEvaluation,
 }
 
 
@@ -148,7 +145,7 @@ class State:
 
 state = State.SETUP
 player_color = chess.WHITE
-eval_name = "evaluate2"
+eval_name = "NN Evaluation"
 depth = 3
 board = chess.Board()
 searcher = None
@@ -163,8 +160,8 @@ fen_input = TextInput((BOARD_SIZE // 2 - 220, 330, 440, 34),
 # Setup screen buttons
 btn_white = Button((BOARD_SIZE // 2 - 220, 130, 200, 50), "Play White")
 btn_black = Button((BOARD_SIZE // 2 + 20, 130, 200, 50), "Play Black")
-btn_eval1 = Button((BOARD_SIZE // 2 - 220, 220, 200, 50), "evaluate")
-btn_eval2 = Button((BOARD_SIZE // 2 + 20, 220, 200, 50), "evaluate2")
+btn_eval1 = Button((BOARD_SIZE // 2 - 220, 220, 200, 50), "handcrafted evaluation")
+btn_eval2 = Button((BOARD_SIZE // 2 + 20, 220, 200, 50), "NN Evaluation")
 btn_depth_minus = Button((BOARD_SIZE // 2 - 220, 400, 50, 40), "-")
 btn_depth_plus = Button((BOARD_SIZE // 2 - 220 + 170, 400, 50, 40), "+")
 btn_start = Button((BOARD_SIZE // 2 - 120, 470, 240, 55), "Start Game", font=title_font)
@@ -180,8 +177,8 @@ flipped_view = False  # only relevant if you want to manually flip; auto-set by 
 def sync_selected_buttons():
     btn_white.selected = (player_color == chess.WHITE)
     btn_black.selected = (player_color == chess.BLACK)
-    btn_eval1.selected = (eval_name == "evaluate")
-    btn_eval2.selected = (eval_name == "evaluate2")
+    btn_eval1.selected = (eval_name == "handcrafted evaluation")
+    btn_eval2.selected = (eval_name == "NN Evaluation")
 
 
 sync_selected_buttons()
@@ -200,12 +197,13 @@ def start_game():
     else:
         board = chess.Board()
 
-    searcher = Searcher(board, EVAL_FUNCS[eval_name])
+    searcher = Searcher(board, EVAL_FUNCS[eval_name]())
     selected = None
     legal_targets = []
     status_msg = ""
     flipped_view = (player_color == chess.BLACK)
     state = State.PLAYING
+    engine_move_if_needed()
 
 
 def engine_move_if_needed():
@@ -412,9 +410,9 @@ while running:
                 elif btn_black.clicked(pos):
                     player_color = chess.BLACK
                 elif btn_eval1.clicked(pos):
-                    eval_name = "evaluate"
+                    eval_name = "handcrafted evaluation"
                 elif btn_eval2.clicked(pos):
-                    eval_name = "evaluate2"
+                    eval_name = "NN EValuation"
                 elif btn_depth_minus.clicked(pos):
                     depth = max(1, depth - 1)
                 elif btn_depth_plus.clicked(pos):
