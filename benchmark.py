@@ -250,4 +250,4 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
             "%"
         )
 # eval_vs_eval2(2, 10)
-multi_fen_benchmark(3, Handcrafted())
+multi_fen_benchmark(4, Handcrafted())

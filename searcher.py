@@ -393,21 +393,21 @@ class Searcher():
         )
         return bool(non_pawn_pieces)
 
-import cProfile
-import pstats
+# import cProfile
+# import pstats
 
-board = bc.Board()
-def benchmark():
-    searcher = Searcher(board, Handcrafted())
-    print(searcher.search(10))
+# board = bc.Board()
+# def benchmark():
+#     searcher = Searcher(board, Handcrafted())
+#     print(searcher.search(10))
 
-profiler = cProfile.Profile()
-profiler.enable()
+# profiler = cProfile.Profile()
+# profiler.enable()
 
-benchmark()
+# benchmark()
 
-profiler.disable()
+# profiler.disable()
 
-stats = pstats.Stats(profiler)
-stats.sort_stats("cumtime")
-stats.print_stats(25)
+# stats = pstats.Stats(profiler)
+# stats.sort_stats("cumtime")
+# stats.print_stats(25)
