@@ -191,10 +191,10 @@ def start_game():
     fen_text = fen_input.text.strip()
     if fen_text:
         try:
-            board = chess.Board(fen_text)
+            board = bc.Board.from_fen(fen_text)
         except ValueError:
             fen_error = "Invalid FEN, using standard start position instead."
-            board = chess.Board()
+            board = bc.Board()
     else:
         board = chess.Board()
 

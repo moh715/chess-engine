@@ -112,8 +112,8 @@ class Searcher():
 
         if self.board in bc.MATE:
             return self._terminal_score(ply)
-        # if self.board.is_repetition():
-        #     return -1
+        if self.board in bc.THREEFOLD_REPETITION:
+            return -1
         if depth == 0:
             t = perf_counter()
             v = self.quiesce(alpha, beta, ply)
@@ -399,7 +399,7 @@ import pstats
 board = bc.Board()
 def benchmark():
     searcher = Searcher(board, Handcrafted())
-    searcher.search(10)
+    print(searcher.search(10))
 
 profiler = cProfile.Profile()
 profiler.enable()
