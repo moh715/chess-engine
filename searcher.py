@@ -3,6 +3,7 @@ from time import perf_counter
 import chess
 import cython_chess
 import heapq
+from evaluation import Handcrafted
 
 META = 1e7
 EXACT = 0
@@ -496,3 +497,22 @@ class Searcher():
         return gain
 
 
+
+import cProfile
+import pstats
+
+board = chess.Board()
+def benchmark():
+    searcher = Searcher(board, Handcrafted())
+    print(searcher.search(8))
+
+profiler = cProfile.Profile()
+profiler.enable()
+
+benchmark()
+
+profiler.disable()
+
+stats = pstats.Stats(profiler)
+stats.sort_stats("cumtime")
+stats.print_stats(25)
