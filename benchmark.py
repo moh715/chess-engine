@@ -249,33 +249,34 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
             "%"
         )
 # eval_vs_eval2(2, 10)
-multi_fen_benchmark(3, Handcrafted)
-# Total time   : 47.562 s
-# Average time : 0.951 s
+# fen: rn1qk1nr/p1pppp1p/7b/P5p1/1p5P/1P6/N1PPbPP1/R1BQKBNR w KQkq - 0 7
+multi_fen_benchmark(4, Handcrafted)
+# Total time   : 547.353 s
+# Average time : 10.947 s
 
 # Totals
-# Nodes        : 614,333
-# TT hits      : 27,190
-# TT lookups   : 614,286
-# Beta cutoffs : 189,043
-# Aspiration fails : 30
-# Sort time    : 0.044 s
-# Eval time    : 7.897 s
-# Quiesce time : 45.981 s
-# TT time      : 0.641 s
-# NPS: 12917
-# TT hit rate: 4.43%
-# Beta cutoff rate: 30.77%
+# Nodes        : 6,469,859
+# TT hits      : 236,467
+# TT lookups   : 6,471,913
+# Beta cutoffs : 2,153,958
+# Aspiration fails : 74
+# Sort time    : 0.072 s
+# Eval time    : 73.165 s
+# Quiesce time : 536.030 s
+# TT time      : 7.707 s
+# NPS: 11820
+# TT hit rate: 3.65%
+# Beta cutoff rate: 33.29%
 
 # Averages
-# Nodes        : 12286.7
-# TT hits      : 543.8
-# TT lookups   : 12285.7
-# Beta cutoffs : 3780.9
-# Aspiration fails : 0.60
-# Sort time    : 0.0009 s
-# Eval time    : 0.1579 s
-# Quiesce time : 0.9196 s
-# TT time      : 0.0128 s
-
-# Moves: [<Move: c5b6>, <Move: a4b5>, <Move: b4b5>, <Move: c4d3>, <Move: e3f1>, <Move: a4e4>, <Move: g3g5>, <Move: b6b3>, <Move: f1e2>, <Move: c5d6>, <Move: h6g5>, <Move: f1e2>, <Move: g4h3>, <Move: b3b1>, <Move: c5b4>, <Move: g1f3>, <Move: e5f3>, <Move: c2b3>, <Move: b1c3>, <Move: c3a4>, <Move: g4g3>, <Move: f1e2>, <Move: b5a4>, <Move: d4c2>, <Move: g8f6>, <Move: f4d6>, <Move: f6h4>, <Move: c1b2>, <Move: c4d3>, <Move: a6b6>, <Move: g2f3>, <Move: b7h1>, <Move: d7d6>, <Move: d8d4>, <Move: c1a3>, <Move: d6e5>, <Move: e6g7>, <Move: b6c5>, <Move: b4c2>, <Move: b5c4>, <Move: d1e1>, <Move: f6d5>, <Move: b4c5>, <Move: b5c4>, <Move: f6f8>, <Move: g8f6>, <Move: c8g4>, <Move: h6f7>, <Move: g1h3>, <Move: e6f5>]
+# Nodes        : 129397.2
+# TT hits      : 4729.3
+# TT lookups   : 129438.3
+# Beta cutoffs : 43079.2
+# Aspiration fails : 1.48
+# Sort time    : 0.0014 s
+# Eval time    : 1.4633 s
+# Quiesce time : 10.7206 s
+# TT time      : 0.1541 s
+# fen: rn3bnr/p3p3/b1qpkp2/7B/P2PPPpP/2p1K1P1/1PPNNR2/R1BQ4 w - - 1 25
+# Moves: [<Move: c5b6>, <Move: a4b5>, <Move: b4b5>, <Move: c4d3>, <Move: e3f1>, <Move: a4e4>, <Move: c5d6>, <Move: b6b3>, <Move: f1e2>, <Move: c5d6>, <Move: h6g5>, <Move: b1d2>, <Move: g4h3>, <Move: b5c6>, <Move: b5c4>, <Move: g1f3>, <Move: e5g4>, <Move: c2b3>, <Move: e2g3>, <Move: c3a4>, <Move: g4g3>, <Move: f1e2>, <Move: b5a4>, <Move: d4c2>, <Move: d8h4>, <Move: f4d6>, <Move: f6g5>, <Move: c1b2>, <Move: c4d3>, <Move: a6b6>, <Move: g2f3>, <Move: b7h1>, <Move: d7d6>, <Move: d8d4>, <Move: c1a3>, <Move: d6e5>, <Move: e6g7>, <Move: b6c5>, <Move: b4c2>, <Move: b5c4>, <Move: d1e1>, <Move: f6d5>, <Move: b4c5>, <Move: d5c4>, <Move: f6f8>, <Move: g8f6>, <Move: h6g4>, <Move: a4b5>, <Move: b4c3>, <Move: e6f5>]
