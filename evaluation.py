@@ -9,7 +9,7 @@ from enum import Enum, auto
 import bulletchess as bc
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2" 
-model = load_model("chess.keras")
+
 PHASE_WEIGHTS = {
     bc.PAWN: 0,
     bc.KNIGHT: 1,
@@ -98,8 +98,10 @@ class NNEvaluation():
         bc.QUEEN: 4,
     }
 
-    def __init__(self, model=model) -> None:
+    def __init__(self, model=None) -> None:
         self.model = model
+        if not model:
+            self.model = load_model("chess.keras")
 
     def __call__(self, board: bc.Board):
         us_idx, them_idx = self.board_to_halfkp(board)
