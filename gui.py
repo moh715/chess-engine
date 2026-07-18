@@ -14,6 +14,7 @@ import pygame
 import chess
 from searcher import Searcher
 from evaluation import Handcrafted, NNEvaluation
+import bulletchess as bc
 
 def copy_to_clipboard(text):
     try:
@@ -147,7 +148,7 @@ state = State.SETUP
 player_color = chess.WHITE
 eval_name = "NN Evaluation"
 depth = 3
-board = chess.Board()
+board = bc.Board()
 searcher = None
 selected = None
 legal_targets = []

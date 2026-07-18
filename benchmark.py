@@ -5,28 +5,29 @@ import chess
 
 from evaluation import Handcrafted, NNEvaluation
 from searcher import Searcher
+import bulletchess as bc
 
 ran = random.Random(42)
 
 def random_position(max_plies=20):
-    board = chess.Board()
+    board = bc.Board()
 
     n = ran.randint(8, max_plies)
 
     for _ in range(n):
-        if board.is_game_over():
+        if board in bc.MATE:
             break
 
-        move = ran.choice(list(board.legal_moves))
-        board.push(move)
+        move = ran.choice(list(board.legal_moves()))
+        board.apply(move)
 
     return board
 
     
 def single_move_benchmark(depth, eval):
-    board = chess.Board("2b1kbnr/4r2p/p1Rp2pq/1P2pp2/2BPPBP1/2Pn4/1PK1NP1R/3Q2N1 w k - 4 18")
+    board = bc.Board.from_fen("2b1kbnr/4r2p/p1Rp2pq/1P2pp2/2BPPBP1/2Pn4/1PK1NP1R/3Q2N1 w k - 4 18")
 
-    searcher = Searcher(board, eval())
+    searcher = Searcher(board, eval)
 
     start = time.perf_counter()
 
@@ -78,7 +79,7 @@ def multi_fen_benchmark(depth, eval):
     for board in test_fens:
         print("fen:", board.fen())
 
-        searcher = Searcher(board, eval())
+        searcher = Searcher(board, eval)
 
         start = time.perf_counter()
         score, move = searcher.search(depth)
@@ -248,5 +249,5 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
             round((eval2_wins + draws * 0.5) / games * 100, 1),
             "%"
         )
-eval_vs_eval2(2, 10)
-# multi_fen_benchmark(3, NNEvaluation())
+# eval_vs_eval2(2, 10)
+multi_fen_benchmark(6, Handcrafted())
