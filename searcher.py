@@ -397,10 +397,10 @@ if __name__ == "__main__":
     import cProfile
     import pstats
     
-    board = bc.Board()
+    board = bc.Board.from_fen("2b1kbnr/4r2p/p1Rp2pq/1P2pp2/2BPPBP1/2Pn4/1PK1NP1R/3Q2N1 w k - 4 18")
     def benchmark():
         searcher = Searcher(board, Handcrafted())
-        print(searcher.search(1))
+        print(searcher.search(5))
     
     profiler = cProfile.Profile()
     profiler.enable()
