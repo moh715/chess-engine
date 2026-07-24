@@ -56,15 +56,10 @@ class Handcrafted:
         if not self.score_builded:
             self.build()
  
-        # Interpolate midgame/endgame PST score by phase (0 = endgame, 24 = opening)
         score = (self.mg_score * (24 - self.phase) + self.eg_score * self.phase) // 24
         score += self.piece_score
-        # `score` here is still in WHITE-relative terms (positive = good for white)
  
         if self.phase <= 4:
-            # Deep endgame: reward pushing the *weaker* side's king away from
-            # the center, in favor of whichever side actually has the
-            # material advantage (not whichever side happens to move next).
             if self.piece_score > 0:
                 advantaged_color = bc.WHITE
             elif self.piece_score < 0:
@@ -80,7 +75,6 @@ class Handcrafted:
                 bonus = distance_from_center * 20
                 score += bonus if advantaged_color == bc.WHITE else -bonus
  
-        # Now flip to the perspective of the side to move.
         score = score if self.board.turn == bc.WHITE else -score
         return score
  
@@ -99,24 +93,14 @@ class Handcrafted:
             captured_square_index = move.destination.index()
  
             if captured_piece is None:
-                # En passant: the captured pawn is not on the destination
-                # square. It sits on the same file as the destination and
-                # the same rank as the origin.
                 captured_square_index = move.destination.index() % 8 + (move.origin.index() // 8) * 8
                 captured_piece = self.board[bc.SQUARES[captured_square_index]]
  
             value = self.piece_values[captured_piece.piece_type]
-            # piece_score is (white material - black material), so capturing
-            # a white piece should *decrease* it and capturing a black piece
-            # should *increase* it.
             value = -value if captured_piece.color == bc.WHITE else value
             self.piece_score += value
             self.phase -= PHASE_WEIGHTS[captured_piece.piece_type]
  
-            # The captured piece also disappears from its PST square - remove
-            # its midgame/endgame contribution. (_move_pst below only moves
-            # the *capturing* piece from origin to destination; it never
-            # accounts for whatever was sitting on the destination/ep square.)
             if captured_piece.color == bc.WHITE:
                 self.mg_score -= MG_MAP[captured_piece.piece_type][captured_square_index]
                 self.eg_score -= EG_MAP[captured_piece.piece_type][captured_square_index]
@@ -129,10 +113,6 @@ class Handcrafted:
             self.piece_score += (self.piece_values[move.promotion] - self.piece_values[bc.PAWN]) * origin_color
             self.phase -= (PHASE_WEIGHTS[move.promotion] - PHASE_WEIGHTS[bc.PAWN])
  
-            # A pawn disappears from origin and a *different* piece type
-            # (the promoted piece) appears at destination - these are two
-            # different piece types, so we can't use _move_pst (which
-            # assumes the same piece type occupies both squares).
             if piece.color == bc.WHITE:
                 self.mg_score -= MG_MAP[bc.PAWN][move.origin.index()]
                 self.eg_score -= EG_MAP[bc.PAWN][move.origin.index()]

@@ -83,6 +83,7 @@ class SEEEvaluator:
         self.board = board
         self.pieces_values = piece_values or self.PIECE_VALUES
         self._cache = {}
+        self.hits = 0
  
     def _ray_blocker(self, from_sq, step, occ):
         """
@@ -192,13 +193,16 @@ class SEEEvaluator:
         to_sq = move.destination
         key = (self.board, move)
         if key in self._cache:
+            self.hits += 1
             return self._cache[key]
         if not assume_legal and move not in self.board.legal_moves():
+            self._cache[key] = 0
             return 0
        
         target = self.board[to_sq]
         attacker = self.board[from_sq]
         if attacker is None or target is None:
+            self._cache[key] = 0
             return 0
  
         attacked_values = [self.pieces_values[target.piece_type]]

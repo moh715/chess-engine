@@ -433,7 +433,7 @@ while running:
                 elif btn_depth_minus.clicked(pos):
                     depth = max(1, depth - 1)
                 elif btn_depth_plus.clicked(pos):
-                    depth = min(6, depth + 1)
+                    depth = min(8, depth + 1)
                 elif btn_start.clicked(pos):
                     sync_selected_buttons()
                     start_game()

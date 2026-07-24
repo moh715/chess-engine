@@ -81,7 +81,7 @@ class Searcher():
 
         return best_score, best_move
 
-    def _get_best_move(self, depth: int, alpha: int, beta: int):
+    def _get_best_move(self, depth: int, alpha: int, beta: int) -> tuple[float, bc.Move]:
         """Root search: scores every legal move with negamax."""
         best_score = float("-inf")
         best_move  = None
@@ -106,7 +106,6 @@ class Searcher():
 
     def minmax(self, alpha: float, beta: float, depth: int, ply: int,
                allow_null: bool = True) -> float:
-        """Alpha-beta negamax. Returns a score only."""
 
         if self.board in bc.MATE:
             return self._terminal_score(ply)
@@ -183,7 +182,6 @@ class Searcher():
 
 
     def quiesce(self, alpha: float, beta: float, ply: int) -> float:
-        """Quiescence search. Returns a score only."""
         self.nodes += 1
         if self.board in bc.MATE:
             return self._terminal_score(ply)
@@ -313,16 +311,16 @@ class Searcher():
             reverse=True,
         )
 
-    def _capture_score(self, move) -> int:
+    def _capture_score(self, move:bc.Move) -> int:
         victim   = self.board[move.destination]
-        attacker = self.board[move.from_square]
+        attacker = self.board[move.origin]
         if victim is None or attacker is None:
             return 0
         piece_values = {
-            bc.PAWN: 1, bc.KNIGHT: 3, bc.BISHOP: 3,
-            bc.ROOK: 5, bc.QUEEN: 9, bc.KING: 0,
+            bc.PAWN: 100, bc.KNIGHT: 320, bc.BISHOP: 330,
+            bc.ROOK: 500, bc.QUEEN: 900, bc.KING: 0,
         }
-        return 100 * piece_values[victim.piece_type] - piece_values[attacker.piece_type]
+        return piece_values[victim.piece_type] - piece_values[attacker.piece_type]
 
     def _move_tactical_score(self, move: bc.Move, best_move, ply: int) -> int:
         score  = 0
@@ -332,13 +330,12 @@ class Searcher():
             score += 1000
         if move in killer:
             score += 700
+        
         score += self.see(move)
         if move.is_castling(self.board):
             score += 50
         if move.promotion:
             score += 100 + (move.promotion == bc.QUEEN) * 90
-        # if self._gives_check(move):
-        #     score += 80
         score += self.history[move]
         return score
 
@@ -390,6 +387,7 @@ if __name__ == "__main__":
     def benchmark():
         searcher = Searcher(board, Handcrafted)
         print(searcher.search(10))
+        print(searcher.seee.hits)
     
     profiler = cProfile.Profile()
     profiler.enable()
