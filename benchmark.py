@@ -1,8 +1,8 @@
 import random
 import time
 
-import chess
-
+import cProfile
+import pstats
 from evaluation import Handcrafted, NNEvaluation
 from searcher import Searcher
 import bulletchess as bc
@@ -29,24 +29,24 @@ def single_move_benchmark(depth, eval):
 
     searcher = Searcher(board, eval)
 
-    start = time.perf_counter()
+    
+    profiler = cProfile.Profile()
+    profiler.enable()
 
     score, move = searcher.search(depth)
 
-    elapsed = time.perf_counter() - start
-
-    print("Best move:", move)
-    print("Score:", score)
-    print("Time:", round(elapsed, 3), "seconds")
-    searcher.print_profile()
-
+    profiler.disable()
+        
+    stats = pstats.Stats(profiler)
+    stats.sort_stats("cumtime")
+    stats.print_stats(25)
     if searcher.tt_lookups:
         print("TT hit rate:", round(100 * searcher.tt_hits / searcher.tt_lookups, 2), "%")
 
 
 def game_benchmark(depth, eval):
-    board = chess.Board()
-    searcher = Searcher(board, eval())
+    board = bc.Board()
+    searcher = Searcher(board, eval)
     start = time.perf_counter()
     moves = 0
     while not board.is_game_over():
@@ -249,38 +249,5 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
             round((eval2_wins + draws * 0.5) / games * 100, 1),
             "%"
         )
-# eval_vs_eval2(2, 10)
-# fen: rn1qk1nr/p1pppp1p/7b/P5p1/1p5P/1P6/N1PPbPP1/R1BQKBNR w KQkq - 0 7
-multi_fen_benchmark(4, Handcrafted)
-# Total time   : 547.353 s
-# Average time : 10.947 s
 
-# Totals
-# Nodes        : 6,469,859
-# TT hits      : 236,467
-# TT lookups   : 6,471,913
-# Beta cutoffs : 2,153,958
-# Aspiration fails : 74
-# Sort time    : 0.072 s
-# Eval time    : 73.165 s
-# Quiesce time : 536.030 s
-# TT time      : 7.707 s
-# NPS: 11820
-# TT hit rate: 3.65%
-# Beta cutoff rate: 33.29%
-
-# Averages
-# Nodes        : 129397.2
-# TT hits      : 4729.3
-# TT lookups   : 129438.3
-# Beta cutoffs : 43079.2
-# Aspiration fails : 1.48
-# Sort time    : 0.0014 s
-# Eval time    : 1.4633 s
-# Quiesce time : 10.7206 s
-# TT time      : 0.1541 s
-# fen: rn3bnr/p3p3/b1qpkp2/7B/P2PPPpP/2p1K1P1/1PPNNR2/R1BQ4 w - - 1 25
-# Moves: [<Move: c5b6>, <Move: a4b5>, <Move: b4b5>, <Move: c4d3>, <Move: e3f1>, <Move: a4e4>, <Move: c5d6>, <Move: b6b3>, <Move: f1e2>, <Move: c5d6>, <Move: h6g5>, <Move: b1d2>, <Move: g4h3>, <Move: b5c6>, <Move: b5c4>, <Move: g1f3>, <Move: e5g4>, <Move: c2b3>, <Move: e2g3>, <Move: c3a4>, <Move: g4g3>, <Move: f1e2>, <Move: b5a4>, <Move: d4c2>, <Move: d8h4>, <Move: f4d6>, <Move: f6g5>, <Move: c1b2>, <Move: c4d3>, <Move: a6b6>, <Move: g2f3>, <Move: b7h1>, <Move: d7d6>, <Move: d8d4>, <Move: c1a3>, <Move: d6e5>, <Move: e6g7>, <Move: b6c5>, <Move: b4c2>, <Move: b5c4>, <Move: d1e1>, <Move: f6d5>, <Move: b4c5>, <Move: d5c4>, <Move: f6f8>, <Move: g8f6>, <Move: h6g4>, <Move: a4b5>, <Move: b4c3>, <Move: e6f5>]
-=======
-multi_fen_benchmark(4, Handcrafted())
->>>>>>> using-bullitchess
+single_move_benchmark(10, Handcrafted)

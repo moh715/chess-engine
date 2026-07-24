@@ -1,13 +1,10 @@
 from collections import defaultdict
 from time import perf_counter
 import heapq
-<<<<<<< HEAD
 from evaluation import Handcrafted
-=======
 import bulletchess as bc
 from evaluation import Handcrafted, NNEvaluation
 from seee import SEEEvaluator
->>>>>>> using-bullitchess
 
 META = 1e7
 EXACT = 0
@@ -383,140 +380,7 @@ class Searcher():
         )
         return bool(non_pawn_pieces)
 
-<<<<<<< HEAD
 
-    def _attacks_to_sq(self, piece_type: int, color: bool,
-                       from_sq: int, to_sq: int, occ: int) -> bool:
-        """
-        Does a piece of (piece_type, color) at from_sq attack to_sq
-        given the occupancy bitboard occ?
-
-        Uses python-chess's precomputed attack tables so that:
-          - sliders respect the current occ  (x-ray awareness)
-          - no board.push / board.pop needed
-        """
-        if piece_type == chess.PAWN:
-            return bool(chess.BB_PAWN_ATTACKS[color][from_sq] & chess.BB_SQUARES[to_sq])
-
-        if piece_type == chess.KNIGHT:
-            return bool(chess.BB_KNIGHT_ATTACKS[from_sq] & chess.BB_SQUARES[to_sq])
-
-        if piece_type == chess.KING:
-            return bool(chess.BB_KING_ATTACKS[from_sq] & chess.BB_SQUARES[to_sq])
-
-        to_bb = chess.BB_SQUARES[to_sq]
-
-        if piece_type == chess.BISHOP:
-            return bool(
-                chess.BB_DIAG_ATTACKS[from_sq][occ & chess.BB_DIAG_MASKS[from_sq]] & to_bb
-            )
-
-        if piece_type == chess.ROOK:
-            return bool(
-                (chess.BB_RANK_ATTACKS[from_sq][occ & chess.BB_RANK_MASKS[from_sq]]
-                 | chess.BB_FILE_ATTACKS[from_sq][occ & chess.BB_FILE_MASKS[from_sq]])
-                & to_bb
-            )
-
-        return bool(
-            (chess.BB_DIAG_ATTACKS[from_sq][occ & chess.BB_DIAG_MASKS[from_sq]]
-             | chess.BB_RANK_ATTACKS[from_sq][occ & chess.BB_RANK_MASKS[from_sq]]
-             | chess.BB_FILE_ATTACKS[from_sq][occ & chess.BB_FILE_MASKS[from_sq]])
-            & to_bb
-        )
-
-
-    def _lva_sq(self, color: bool, to_sq: int, occ: int):
-        """
-        Least-valuable attacker of `color` on `to_sq` given occupancy `occ`.
-
-        Pieces are tried in ascending value order so the first hit is the LVA.
-        Absolutely-pinned pieces are skipped — they cannot legally move.
-
-        Returns the square index of the LVA, or None.
-        """
-        for piece_type in (chess.PAWN, chess.KNIGHT, chess.BISHOP,
-                           chess.ROOK, chess.QUEEN, chess.KING):
-            candidates = self.board.pieces(piece_type, color) & occ
-            if not candidates:
-                continue
-
-            for sq in chess.SquareSet(candidates):
-                if not self._attacks_to_sq(piece_type, color, sq, to_sq, occ):
-                    continue
-
-                if self.board.is_pinned(color, sq):
-                    pin_ray = self.board.pin(color, sq)
-                    if not (pin_ray & chess.BB_SQUARES[to_sq]):
-                        continue
-
-                return sq
-
-        return None
-
-
-    def see(self, move: chess.Move) -> int:
-
-        to_sq   = move.to_square
-        from_sq = move.from_square
-
-        if not self.board.is_legal(move):
-            return 0
-
-        target   = self.board.piece_at(to_sq)
-        attacker = self.board.piece_at(from_sq)
-        if target is None or attacker is None:
-            return 0
-
-
-        attacked_values = [self.pieces_values[target.piece_type]]
-
-        occ = self.board.occupied ^ chess.BB_SQUARES[from_sq]
-
-        val_on_sq = self.pieces_values.get(move.promotion) or self.pieces_values[attacker.piece_type]
-
-        color = not attacker.color
-
-        while True:
-            lva_sq = self._lva_sq(color, to_sq, occ)
-            if lva_sq is None:
-                break
-
-            lva = self.board.piece_at(lva_sq)
-
-            attacked_values.append(val_on_sq)
-            val_on_sq = self.pieces_values[lva.piece_type]
-            occ      ^= chess.BB_SQUARES[lva_sq]
-            color     = not color
-
-
-        gain = attacked_values[-1]
-        for i in range(len(attacked_values) - 2, -1, -1):
-            gain = attacked_values[i] - max(0, gain)
-
-        return gain
-
-
-
-# import cProfile
-# import pstats
-
-# board = chess.Board()
-# def benchmark():
-#     searcher = Searcher(board, Handcrafted())
-#     print(searcher.search(8))
-
-# profiler = cProfile.Profile()
-# profiler.enable()
-
-# benchmark()
-
-# profiler.disable()
-
-# stats = pstats.Stats(profiler)
-# stats.sort_stats("cumtime")
-# stats.print_stats(25)
-=======
 if __name__ == "__main__":
     import cProfile
     import pstats
@@ -537,4 +401,3 @@ if __name__ == "__main__":
     stats = pstats.Stats(profiler)
     stats.sort_stats("cumtime")
     stats.print_stats(25)
->>>>>>> using-bullitchess
