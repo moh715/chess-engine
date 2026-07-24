@@ -5,28 +5,29 @@ import chess
 
 from evaluation import Handcrafted, NNEvaluation
 from searcher import Searcher
+import bulletchess as bc
 
 ran = random.Random(42)
 
 def random_position(max_plies=20):
-    board = chess.Board()
+    board = bc.Board()
 
     n = ran.randint(8, max_plies)
 
     for _ in range(n):
-        if board.is_game_over():
+        if board in bc.MATE:
             break
 
-        move = ran.choice(list(board.legal_moves))
-        board.push(move)
+        move = ran.choice(list(board.legal_moves()))
+        board.apply(move)
 
     return board
 
     
 def single_move_benchmark(depth, eval):
-    board = chess.Board("2b1kbnr/4r2p/p1Rp2pq/1P2pp2/2BPPBP1/2Pn4/1PK1NP1R/3Q2N1 w k - 4 18")
+    board = bc.Board.from_fen("2b1kbnr/4r2p/p1Rp2pq/1P2pp2/2BPPBP1/2Pn4/1PK1NP1R/3Q2N1 w k - 4 18")
 
-    searcher = Searcher(board, eval())
+    searcher = Searcher(board, eval)
 
     start = time.perf_counter()
 
@@ -78,7 +79,7 @@ def multi_fen_benchmark(depth, eval):
     for board in test_fens:
         print("fen:", board.fen())
 
-        searcher = Searcher(board, eval())
+        searcher = Searcher(board, eval)
 
         start = time.perf_counter()
         score, move = searcher.search(depth)
@@ -280,3 +281,6 @@ multi_fen_benchmark(4, Handcrafted)
 # TT time      : 0.1541 s
 # fen: rn3bnr/p3p3/b1qpkp2/7B/P2PPPpP/2p1K1P1/1PPNNR2/R1BQ4 w - - 1 25
 # Moves: [<Move: c5b6>, <Move: a4b5>, <Move: b4b5>, <Move: c4d3>, <Move: e3f1>, <Move: a4e4>, <Move: c5d6>, <Move: b6b3>, <Move: f1e2>, <Move: c5d6>, <Move: h6g5>, <Move: b1d2>, <Move: g4h3>, <Move: b5c6>, <Move: b5c4>, <Move: g1f3>, <Move: e5g4>, <Move: c2b3>, <Move: e2g3>, <Move: c3a4>, <Move: g4g3>, <Move: f1e2>, <Move: b5a4>, <Move: d4c2>, <Move: d8h4>, <Move: f4d6>, <Move: f6g5>, <Move: c1b2>, <Move: c4d3>, <Move: a6b6>, <Move: g2f3>, <Move: b7h1>, <Move: d7d6>, <Move: d8d4>, <Move: c1a3>, <Move: d6e5>, <Move: e6g7>, <Move: b6c5>, <Move: b4c2>, <Move: b5c4>, <Move: d1e1>, <Move: f6d5>, <Move: b4c5>, <Move: d5c4>, <Move: f6f8>, <Move: g8f6>, <Move: h6g4>, <Move: a4b5>, <Move: b4c3>, <Move: e6f5>]
+=======
+multi_fen_benchmark(4, Handcrafted())
+>>>>>>> using-bullitchess

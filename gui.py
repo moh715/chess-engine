@@ -6,14 +6,15 @@ Chess engine testing GUI
 - Start from a custom FEN (or the normal start position)
 - Copy the current board FEN to your clipboard at any time
 
-Requires: pygame, python-chess, and your own player.py / evaluation.py
+Requires: pygame, bulletchess, and your own searcher.py / evaluation.py
 (same interface as your original script: Searcher(board, eval_fn).search(depth) -> (score, move))
 """
 
 import pygame
-import chess
+import bulletchess as bc
 from searcher import Searcher
 from evaluation import Handcrafted, NNEvaluation
+
 
 def copy_to_clipboard(text):
     try:
@@ -67,9 +68,15 @@ TEXT_COLOR = (255, 255, 255)
 DARK_TEXT = (20, 20, 20)
 SIDEBAR_BG = (30, 30, 35)
 
-PIECES = {
-    "P": "\u2659", "N": "\u2658", "B": "\u2657", "R": "\u2656", "Q": "\u2655", "K": "\u2654",
-    "p": "\u265F", "n": "\u265E", "b": "\u265D", "r": "\u265C", "q": "\u265B", "k": "\u265A",
+# bulletchess doesn't expose Piece.symbol() the way python-chess does, so we
+# build our own (piece_type, color) -> glyph lookup instead.
+PIECE_GLYPHS = {
+    (bc.PAWN,   bc.WHITE): "\u2659", (bc.PAWN,   bc.BLACK): "\u265F",
+    (bc.KNIGHT, bc.WHITE): "\u2658", (bc.KNIGHT, bc.BLACK): "\u265E",
+    (bc.BISHOP, bc.WHITE): "\u2657", (bc.BISHOP, bc.BLACK): "\u265D",
+    (bc.ROOK,   bc.WHITE): "\u2656", (bc.ROOK,   bc.BLACK): "\u265C",
+    (bc.QUEEN,  bc.WHITE): "\u2655", (bc.QUEEN,  bc.BLACK): "\u265B",
+    (bc.KING,   bc.WHITE): "\u2654", (bc.KING,   bc.BLACK): "\u265A",
 }
 
 EVAL_FUNCS = {
@@ -144,13 +151,13 @@ class State:
 
 
 state = State.SETUP
-player_color = chess.WHITE
+player_color = bc.WHITE
 eval_name = "NN Evaluation"
 depth = 3
-board = chess.Board()
+board = bc.Board()
 searcher = None
-selected = None
-legal_targets = []
+selected = None          # bc.Square or None
+legal_targets = []       # list of bc.Square
 status_msg = ""
 fen_error = ""
 
@@ -175,8 +182,8 @@ flipped_view = False  # only relevant if you want to manually flip; auto-set by 
 
 
 def sync_selected_buttons():
-    btn_white.selected = (player_color == chess.WHITE)
-    btn_black.selected = (player_color == chess.BLACK)
+    btn_white.selected = (player_color == bc.WHITE)
+    btn_black.selected = (player_color == bc.BLACK)
     btn_eval1.selected = (eval_name == "handcrafted evaluation")
     btn_eval2.selected = (eval_name == "NN Evaluation")
 
@@ -190,26 +197,34 @@ def start_game():
     fen_text = fen_input.text.strip()
     if fen_text:
         try:
-            board = chess.Board(fen_text)
-        except ValueError:
+            board = bc.Board.from_fen(fen_text)
+        except Exception:
+            # bulletchess's from_fen error type isn't confirmed to be ValueError
+            # specifically, so this is intentionally broad — narrow it back down
+            # once you've verified what it actually raises on a bad FEN string.
             fen_error = "Invalid FEN, using standard start position instead."
-            board = chess.Board()
+            board = bc.Board()
     else:
-        board = chess.Board()
+        board = bc.Board()
 
-    searcher = Searcher(board, EVAL_FUNCS[eval_name]())
+    searcher = Searcher(board, EVAL_FUNCS[eval_name])
     selected = None
     legal_targets = []
     status_msg = ""
-    flipped_view = (player_color == chess.BLACK)
+    flipped_view = (player_color == bc.BLACK)
     state = State.PLAYING
     engine_move_if_needed()
+
+
+def is_game_over(b: bc.Board) -> bool:
+    """bulletchess has no single is_game_over(); combine the terminal statuses."""
+    return b in bc.CHECKMATE or b in bc.DRAW
 
 
 def engine_move_if_needed():
     """If it's the engine's turn, let it think and push its move."""
     global status_msg
-    if board.is_game_over():
+    if is_game_over(board):
         return
     if board.turn != player_color:
         status_msg = "Engine is thinking..."
@@ -218,25 +233,25 @@ def engine_move_if_needed():
         score, pv = searcher.search(depth)
         print("Score:", score, "PV:", pv)
         if pv:
-            board.push(pv)
+            board.apply(pv)
         else:
             print("No move returned. FEN:", board.fen())
         status_msg = ""
 
 
 def board_result_text():
-    if not board.is_game_over():
+    if not is_game_over(board):
         return None
-    if board.is_checkmate():
-        winner = "Black" if board.turn == chess.WHITE else "White"
+    if board in bc.CHECKMATE:
+        winner = "Black" if board.turn == bc.WHITE else "White"
         return f"Checkmate — {winner} wins"
-    if board.is_stalemate():
+    if board in bc.STALEMATE:
         return "Draw — stalemate"
-    if board.is_insufficient_material():
+    if board in bc.INSUFFICIENT_MATERIAL:
         return "Draw — insufficient material"
-    if board.can_claim_fifty_moves():
+    if board in bc.FIFTY_MOVE_RULE:
         return "Draw — fifty move rule"
-    if board.can_claim_threefold_repetition():
+    if board in bc.THREEFOLD_REPETITION:
         return "Draw — threefold repetition"
     return "Game over"
 
@@ -245,7 +260,7 @@ def board_result_text():
 # Drawing
 # ---------------------------------------------------------------------------
 def screen_square_to_chess_square(file, rank):
-    """Convert a screen file/rank (0..7, 0=top-left area) to a chess.Square,
+    """Convert a screen file/rank (0..7, 0=top-left area) to a bulletchess Square,
     accounting for whether the board view is flipped."""
     if flipped_view:
         real_file = 7 - file
@@ -253,12 +268,13 @@ def screen_square_to_chess_square(file, rank):
     else:
         real_file = file
         real_rank = 7 - rank
-    return chess.square(real_file, real_rank)
+    return bc.SQUARES[real_rank * 8 + real_file]
 
 
-def chess_square_to_screen(square):
-    file = chess.square_file(square)
-    rank = chess.square_rank(square)
+def chess_square_to_screen(square: bc.Square):
+    idx = square.index()
+    file = idx % 8
+    rank = idx // 8
     if flipped_view:
         sx = 7 - file
         sy = rank
@@ -314,12 +330,13 @@ def draw_board_area():
             pygame.draw.rect(screen, color,
                               (file * SQ_SIZE, rank * SQ_SIZE, SQ_SIZE, SQ_SIZE))
 
-    for square in chess.SQUARES:
-        piece = board.piece_at(square)
-        if not piece:
+    for square in bc.SQUARES:
+        piece = board[square]
+        if piece is None:
             continue
         sx, sy = chess_square_to_screen(square)
-        text = piece_font.render(PIECES[piece.symbol()], True, (0, 0, 0))
+        glyph = PIECE_GLYPHS[(piece.piece_type, piece.color)]
+        text = piece_font.render(glyph, True, (0, 0, 0))
         rect = text.get_rect(center=(sx * SQ_SIZE + SQ_SIZE // 2,
                                       sy * SQ_SIZE + SQ_SIZE // 2))
         screen.blit(text, rect)
@@ -344,10 +361,10 @@ def draw_sidebar():
 
     y = 200
     lines = [
-        f"You are: {'White' if player_color == chess.WHITE else 'Black'}",
+        f"You are: {'White' if player_color == bc.WHITE else 'Black'}",
         f"Eval fn: {eval_name}",
         f"Depth: {depth}",
-        f"Turn: {'White' if board.turn == chess.WHITE else 'Black'}",
+        f"Turn: {'White' if board.turn == bc.WHITE else 'Black'}",
     ]
     for line in lines:
         label = ui_font_small.render(line, True, TEXT_COLOR)
@@ -406,17 +423,17 @@ while running:
             if event.type == pygame.MOUSEBUTTONDOWN:
                 pos = event.pos
                 if btn_white.clicked(pos):
-                    player_color = chess.WHITE
+                    player_color = bc.WHITE
                 elif btn_black.clicked(pos):
-                    player_color = chess.BLACK
+                    player_color = bc.BLACK
                 elif btn_eval1.clicked(pos):
                     eval_name = "handcrafted evaluation"
                 elif btn_eval2.clicked(pos):
-                    eval_name = "NN EValuation"
+                    eval_name = "NN Evaluation"
                 elif btn_depth_minus.clicked(pos):
                     depth = max(1, depth - 1)
                 elif btn_depth_plus.clicked(pos):
-                    depth = min(6, depth + 1)
+                    depth = min(8, depth + 1)
                 elif btn_start.clicked(pos):
                     sync_selected_buttons()
                     start_game()
@@ -434,40 +451,59 @@ while running:
                     legal_targets = []
                 elif btn_flip.clicked(pos):
                     flipped_view = not flipped_view
-                elif pos[0] < BOARD_SIZE and board.turn == player_color and not board.is_game_over():
+                elif pos[0] < BOARD_SIZE and board.turn == player_color and not is_game_over(board):
                     file = pos[0] // SQ_SIZE
                     rank = pos[1] // SQ_SIZE
                     square = screen_square_to_chess_square(file, rank)
+                    legal_moves = list(board.legal_moves())
 
                     if selected is None:
-                        piece = board.piece_at(square)
+                        piece = board[square]
                         if piece and piece.color == player_color:
                             selected = square
-                            legal_targets = [m.to_square for m in board.legal_moves
-                                              if m.from_square == selected]
+                            legal_targets = [m.destination for m in legal_moves
+                                              if m.origin == selected]
                     else:
                         if square == selected:
                             selected = None
                             legal_targets = []
                         else:
-                            move = chess.Move(selected, square)
-                            if move not in board.legal_moves:
-                                promo = chess.Move(selected, square, promotion=chess.QUEEN)
-                                if promo in board.legal_moves:
-                                    move = promo
+                            # bulletchess's Move() raises ValueError at construction time
+                            # if the origin->destination shape is impossible for every
+                            # piece type (unlike python-chess, where Move() never raises
+                            # and only legal_moves membership determines legality). A
+                            # careless click (e.g. two squares with no rank/file/diagonal/
+                            # knight/king relationship) will hit this, so both attempts
+                            # need to be guarded, not just checked against legal_moves.
+                            move = None
+                            try:
+                                candidate = bc.Move(selected, square)
+                                if candidate in legal_moves:
+                                    move = candidate
+                            except ValueError:
+                                pass
+
+                            if move is None:
+                                try:
+                                    promo = bc.Move(selected, square,promote_to=bc.QUEEN)
+                                    if promo in legal_moves:
+                                        move = promo
+                                except ValueError:
+                                    pass
+
+                            if move is None:
+                                # maybe clicked another one of your own pieces
+                                piece = board[square]
+                                if piece and piece.color == player_color:
+                                    selected = square
+                                    legal_targets = [m.destination for m in legal_moves
+                                                      if m.origin == selected]
                                 else:
-                                    # maybe clicked another one of your own pieces
-                                    piece = board.piece_at(square)
-                                    if piece and piece.color == player_color:
-                                        selected = square
-                                        legal_targets = [m.to_square for m in board.legal_moves
-                                                          if m.from_square == selected]
-                                    else:
-                                        selected = None
-                                        legal_targets = []
-                                    move = None
+                                    selected = None
+                                    legal_targets = []
+
                             if move is not None:
-                                board.push(move)
+                                board.apply(move)
                                 selected = None
                                 legal_targets = []
                                 engine_move_if_needed()

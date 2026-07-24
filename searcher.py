@@ -1,9 +1,13 @@
 from collections import defaultdict
 from time import perf_counter
-import chess
-import cython_chess
 import heapq
+<<<<<<< HEAD
 from evaluation import Handcrafted
+=======
+import bulletchess as bc
+from evaluation import Handcrafted, NNEvaluation
+from seee import SEEEvaluator
+>>>>>>> using-bullitchess
 
 META = 1e7
 EXACT = 0
@@ -13,17 +17,19 @@ MAX_DEPTH = 20
 
 
 class Searcher():
-    def __init__(self, board: chess.Board, evaluation):
+    def __init__(self, board: bc.Board, evaluation):
         self.board = board
-        self.evaluate = evaluation
+        self.evaluate = evaluation(board)
+        self.seee = SEEEvaluator(board)
+        self.see = self.seee.see
         self.tt = {}
         self.qtt = {}
         self.killer = [[None, None] for _ in range(MAX_DEPTH)]
         self.history = defaultdict(int)
         self.WINDOW_MARGIN = evaluation.window_margin
         self.pieces_values ={
-                    chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 300,
-                    chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 100,
+                    bc.PAWN: 100, bc.KNIGHT: 320, bc.BISHOP: 300,
+                    bc.ROOK: 500, bc.QUEEN: 900, bc.KING: 100,
                 }
         self.nodes = 0
         self.tt_hits = 0
@@ -34,7 +40,7 @@ class Searcher():
         self.time_eval    = 0.0
         self.time_quiesce = 0.0
         self.time_tt      = 0.0
-
+        
 
     def print_profile(self):
         """Print a tidy summary of where time was spent."""
@@ -79,20 +85,18 @@ class Searcher():
 
         return best_score, best_move
 
-    def _get_best_move(self, depth: int, alpha: int, beta: int):
+    def _get_best_move(self, depth: int, alpha: int, beta: int) -> tuple[float, bc.Move]:
         """Root search: scores every legal move with negamax."""
         best_score = float("-inf")
         best_move  = None
-
-        t = perf_counter()
-        moves = self._sorted_moves(list(cython_chess.generate_legal_moves(self.board,chess.BB_ALL,chess.BB_ALL)), depth)
-        self.time_sort += perf_counter() - t
+        moves = self._sorted_moves(list(self.board.legal_moves()), depth)
 
         for move in moves:
-            self.board.push(move)
+            self.evaluate.do(move)
+            self.board.apply(move)
             score = -self.minmax(-beta, -alpha, depth - 1, ply=1)
-            self.board.pop()
-
+            self.board.undo()
+            self.evaluate.undo()
             if score > best_score:
                 best_score = score
                 best_move  = move
@@ -106,23 +110,18 @@ class Searcher():
 
     def minmax(self, alpha: float, beta: float, depth: int, ply: int,
                allow_null: bool = True) -> float:
-        """Alpha-beta negamax. Returns a score only."""
 
-        if self.board.is_game_over():
+        if self.board in bc.MATE:
             return self._terminal_score(ply)
-        if self.board.is_repetition():
+        if self.board in bc.THREEFOLD_REPETITION:
             return -1
         if depth == 0:
-            t = perf_counter()
             v = self.quiesce(alpha, beta, ply)
-            self.time_quiesce += perf_counter() - t
             return v
 
-        key = self.board._transposition_key()
-
-        t = perf_counter()
+        key = hash(self.board)
         cached = self._tt_lookup(key, depth, alpha, beta, True)
-        self.time_tt += perf_counter() - t
+        
 
         if cached is not None:
             return cached
@@ -132,13 +131,13 @@ class Searcher():
 
         if (allow_null
             and depth >= 3
-            and not self.board.is_check()
+            and not self.board in bc.CHECK
             and self._has_pieces_left()):
             R = 2 if depth <= 6 else 3
-            self.board.push(chess.Move.null())
+            self.board.apply(None)
             score = -self.minmax(-beta, -beta + 1,
                                  depth - 1 - R, ply + 1, False)
-            self.board.pop()
+            self.board.undo()
             if score >= beta:
                 return beta
 
@@ -146,23 +145,25 @@ class Searcher():
         best_move  = None
         entry = self.tt.get(key)
         best = entry[1] if entry else None
-        moves = [ (-self._move_tactical_score(m, best, ply), i,m) for i, m in enumerate(cython_chess.generate_legal_moves(self.board,chess.BB_ALL,chess.BB_ALL))]
+        moves = [ (-self._move_tactical_score(m, best, ply), i,m) for i, m in enumerate(self.board.legal_moves())]
         heapq.heapify(moves)
         number = 0
 
         while moves:
             _,_, move = moves[0]
-            self.board.push(move)
+            reduction = self._get_reduction(move, number, depth)
+            self.evaluate.do(move)
+            self.board.apply(move)
             if number == 0:
                 value = -self.minmax(-beta, -alpha, depth - 1, ply + 1)
             else:
-                reduction = self._get_reduction(move, number, depth)
                 value = -self.minmax(-alpha - 1, -alpha,
                                      depth - 1 - reduction, ply + 1)
                 if alpha < value < beta:
                     value = -self.minmax(-beta, -alpha, depth - 1, ply + 1)
 
-            self.board.pop()
+            self.board.undo()
+            self.evaluate.undo()
             number += 1
             if value > best_value:
                 best_value = value
@@ -171,46 +172,38 @@ class Searcher():
 
             if best_value >= beta:
                 self.beta_cutof += 1
-                if not self.board.is_capture(move):
+                if not move.is_capture(self.board):
                     if move != self.killer[ply][0]:
                         self.killer[ply][1] = self.killer[ply][0]
                         self.killer[ply][0] = move
                     self.history[move] += depth * depth
                 break
             heapq.heappop(moves)
-
-        t = perf_counter()
         self._cache(key, depth, best_value, best_move, orig_alpha, beta, True)
-        self.time_tt += perf_counter() - t
+        
 
         return best_value
 
 
     def quiesce(self, alpha: float, beta: float, ply: int) -> float:
-        """Quiescence search. Returns a score only."""
         self.nodes += 1
-        if self.board.is_game_over():
+        if self.board in bc.MATE:
             return self._terminal_score(ply)
 
-        key = self.board._transposition_key()
-
-        t = perf_counter()
+        key = hash(self.board)
         cached = self._tt_lookup(key, 0, alpha, beta, False)
-        self.time_tt += perf_counter() - t
+        
         if cached is not None:
             return cached
 
         orig_alpha = alpha
         pv = self.pieces_values
 
-        if self.board.is_check():
+        if self.board in bc.CHECK:
             best_value = float("-inf")
-            moves = list(cython_chess.generate_legal_moves(
-                self.board, chess.BB_ALL, chess.BB_ALL))
+            moves = self.board.legal_moves()
         else:
-            t = perf_counter()
-            stand_pat = self.evaluate(self.board)
-            self.time_eval += perf_counter() - t
+            stand_pat = self.evaluate()
 
             if stand_pat >= beta:
                 return stand_pat
@@ -223,11 +216,11 @@ class Searcher():
                 return best_value
 
             moves = []
-            for move in cython_chess.generate_legal_moves(self.board, chess.BB_ALL, chess.BB_ALL):
-                if not (self.board.is_capture(move) or move.promotion):
+            for move in self.board.legal_moves():
+                if not (move.is_capture(self.board) or move.promotion):
                     continue
 
-                victim = self.board.piece_at(move.to_square)
+                victim = self.board[move.destination]
                 gain = pv[victim.piece_type] if victim else 0
                 if move.promotion:
                     gain += pv[move.promotion]
@@ -249,8 +242,8 @@ class Searcher():
         while moves:
             _, _, move = moves[0]
 
-
-            self.board.push(move)
+            self.evaluate.do(move)
+            self.board.apply(move)
             if first_move:
                 value      = -self.quiesce(-beta, -alpha, ply + 1)
                 first_move = False
@@ -258,7 +251,8 @@ class Searcher():
                 value = -self.quiesce(-alpha - 1, -alpha, ply + 1)
                 if alpha < value < beta:
                     value = -self.quiesce(-beta, -alpha, ply + 1)
-            self.board.pop()
+            self.board.undo()
+            self.evaluate.undo()
 
             if value > best_value:
                 best_value = value
@@ -269,10 +263,8 @@ class Searcher():
                 self.beta_cutof += 1
                 break
             heapq.heappop(moves)
-
-        t = perf_counter()
         self._cache(key, 0, best_value, best_move, orig_alpha, beta, False)
-        self.time_tt += perf_counter() - t
+        
         return best_value
 
 
@@ -313,7 +305,7 @@ class Searcher():
 
 
     def _sorted_moves(self, moves, ply):
-        key   = self.board._transposition_key()
+        key   = hash(self.board)
         entry = self.tt.get(key)
         best  = entry[1] if entry else None
 
@@ -323,18 +315,18 @@ class Searcher():
             reverse=True,
         )
 
-    def _capture_score(self, move) -> int:
-        victim   = self.board.piece_at(move.to_square)
-        attacker = self.board.piece_at(move.from_square)
+    def _capture_score(self, move:bc.Move) -> int:
+        victim   = self.board[move.destination]
+        attacker = self.board[move.origin]
         if victim is None or attacker is None:
             return 0
         piece_values = {
-            chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
-            chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 100,
+            bc.PAWN: 100, bc.KNIGHT: 320, bc.BISHOP: 330,
+            bc.ROOK: 500, bc.QUEEN: 900, bc.KING: 0,
         }
-        return 100 * piece_values[victim.piece_type] - piece_values[attacker.piece_type]
+        return piece_values[victim.piece_type] - piece_values[attacker.piece_type]
 
-    def _move_tactical_score(self, move: chess.Move, best_move, ply: int) -> int:
+    def _move_tactical_score(self, move: bc.Move, best_move, ply: int) -> int:
         score  = 0
         killer = self.killer[ply] if ply < MAX_DEPTH else []
 
@@ -342,21 +334,20 @@ class Searcher():
             score += 1000
         if move in killer:
             score += 700
+        
         score += self.see(move)
-        if self.board.is_castling(move):
+        if move.is_castling(self.board):
             score += 50
         if move.promotion:
-            score += 100 + (move.promotion == chess.QUEEN) * 90
-        # if self.board.gives_check(move):
-        #     score += 80
+            score += 100 + (move.promotion == bc.QUEEN) * 90
         score += self.history[move]
         return score
 
 
-    def _get_reduction(self, move: chess.Move, number: int, depth: int) -> int:
-        if self.board.is_capture(move):
+    def _get_reduction(self, move: bc.Move, number: int, depth: int) -> int:
+        if move.is_capture(self.board):
             return 0
-        if self.board.gives_check(move):
+        if self._gives_check(move):
             return 0
         if number <= 5:
             return 0
@@ -369,21 +360,30 @@ class Searcher():
         return 2
 
     def _terminal_score(self, ply: int) -> float:
-        if self.board.is_checkmate():
+        if self.board in bc.CHECKMATE:
             return -META + ply
         return 0
 
+
+    def _gives_check(self, move: bc.Move) -> bool:
+            self.board.apply(move)
+            result = self.board in bc.CHECK
+            self.board.undo()
+            return result
+
+    
     def _has_pieces_left(self) -> bool:
         """True when the side to move has at least one piece beyond king/pawns."""
         us = self.board.turn
         non_pawn_pieces = (
-            self.board.pieces(chess.KNIGHT, us) |
-            self.board.pieces(chess.BISHOP, us) |
-            self.board.pieces(chess.ROOK,   us) |
-            self.board.pieces(chess.QUEEN,  us)
+            self.board[us, bc.KNIGHT] |
+            self.board[us, bc.BISHOP] |
+            self.board[us, bc.ROOK] |
+            self.board[us, bc.QUEEN]
         )
         return bool(non_pawn_pieces)
 
+<<<<<<< HEAD
 
     def _attacks_to_sq(self, piece_type: int, color: bool,
                        from_sq: int, to_sq: int, occ: int) -> bool:
@@ -516,3 +516,25 @@ class Searcher():
 # stats = pstats.Stats(profiler)
 # stats.sort_stats("cumtime")
 # stats.print_stats(25)
+=======
+if __name__ == "__main__":
+    import cProfile
+    import pstats
+    
+    board = bc.Board()
+    def benchmark():
+        searcher = Searcher(board, Handcrafted)
+        print(searcher.search(10))
+        print(searcher.seee.hits)
+    
+    profiler = cProfile.Profile()
+    profiler.enable()
+    
+    benchmark()
+    
+    profiler.disable()
+    
+    stats = pstats.Stats(profiler)
+    stats.sort_stats("cumtime")
+    stats.print_stats(25)
+>>>>>>> using-bullitchess
