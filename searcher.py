@@ -2,7 +2,7 @@ from collections import defaultdict
 from time import perf_counter
 import heapq
 import bulletchess as bc
-from evaluation import Handcrafted
+from evaluation import Handcrafted, NNEvaluation
 from seee import SEEEvaluator
 
 META = 1e7
@@ -15,7 +15,7 @@ MAX_DEPTH = 20
 class Searcher():
     def __init__(self, board: bc.Board, evaluation):
         self.board = board
-        self.evaluate = evaluation
+        self.evaluate = evaluation(board)
         self.seee = SEEEvaluator(board)
         self.see = self.seee.see
         self.tt = {}
@@ -91,10 +91,11 @@ class Searcher():
         self.time_sort += perf_counter() - t
 
         for move in moves:
+            self.evaluate.do(move)
             self.board.apply(move)
             score = -self.minmax(-beta, -alpha, depth - 1, ply=1)
             self.board.undo()
-
+            self.evaluate.undo()
             if score > best_score:
                 best_score = score
                 best_move  = move
@@ -155,6 +156,7 @@ class Searcher():
         while moves:
             _,_, move = moves[0]
             reduction = self._get_reduction(move, number, depth)
+            self.evaluate.do(move)
             self.board.apply(move)
             if number == 0:
                 value = -self.minmax(-beta, -alpha, depth - 1, ply + 1)
@@ -165,6 +167,7 @@ class Searcher():
                     value = -self.minmax(-beta, -alpha, depth - 1, ply + 1)
 
             self.board.undo()
+            self.evaluate.undo()
             number += 1
             if value > best_value:
                 best_value = value
@@ -210,7 +213,7 @@ class Searcher():
             moves = self.board.legal_moves()
         else:
             t = perf_counter()
-            stand_pat = self.evaluate(self.board)
+            stand_pat = self.evaluate()
             self.time_eval += perf_counter() - t
 
             if stand_pat >= beta:
@@ -250,7 +253,7 @@ class Searcher():
         while moves:
             _, _, move = moves[0]
 
-
+            self.evaluate.do(move)
             self.board.apply(move)
             if first_move:
                 value      = -self.quiesce(-beta, -alpha, ply + 1)
@@ -260,6 +263,7 @@ class Searcher():
                 if alpha < value < beta:
                     value = -self.quiesce(-beta, -alpha, ply + 1)
             self.board.undo()
+            self.evaluate.undo()
 
             if value > best_value:
                 best_value = value
@@ -397,10 +401,10 @@ if __name__ == "__main__":
     import cProfile
     import pstats
     
-    board = bc.Board.from_fen("2b1kbnr/4r2p/p1Rp2pq/1P2pp2/2BPPBP1/2Pn4/1PK1NP1R/3Q2N1 w k - 4 18")
+    board = bc.Board()
     def benchmark():
-        searcher = Searcher(board, Handcrafted())
-        print(searcher.search(5))
+        searcher = Searcher(board, Handcrafted)
+        print(searcher.search(10))
     
     profiler = cProfile.Profile()
     profiler.enable()
