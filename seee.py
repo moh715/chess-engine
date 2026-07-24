@@ -82,6 +82,7 @@ class SEEEvaluator:
     def __init__(self, board: bc.Board, piece_values: dict = None):
         self.board = board
         self.pieces_values = piece_values or self.PIECE_VALUES
+        self._cache = {}
  
     def _ray_blocker(self, from_sq, step, occ):
         """
@@ -189,10 +190,12 @@ class SEEEvaluator:
         """
         from_sq = move.origin
         to_sq = move.destination
- 
+        key = (self.board, move)
+        if key in self._cache:
+            return self._cache[key]
         if not assume_legal and move not in self.board.legal_moves():
             return 0
- 
+       
         target = self.board[to_sq]
         attacker = self.board[from_sq]
         if attacker is None or target is None:
@@ -246,6 +249,7 @@ class SEEEvaluator:
         gain = attacked_values[-1]
         for i in range(len(attacked_values) - 2, -1, -1):
             gain = attacked_values[i] - max(0, gain)
+        self._cache[key] = gain
         return gain
 if __name__ == "__main__":
     board = bc.Board.from_fen("4k3/8/8/3p4/2P5/8/8/4K3 w - - 0 1")

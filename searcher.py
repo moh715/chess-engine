@@ -85,10 +85,7 @@ class Searcher():
         """Root search: scores every legal move with negamax."""
         best_score = float("-inf")
         best_move  = None
-
-        t = perf_counter()
         moves = self._sorted_moves(list(self.board.legal_moves()), depth)
-        self.time_sort += perf_counter() - t
 
         for move in moves:
             self.evaluate.do(move)
@@ -116,16 +113,12 @@ class Searcher():
         if self.board in bc.THREEFOLD_REPETITION:
             return -1
         if depth == 0:
-            t = perf_counter()
             v = self.quiesce(alpha, beta, ply)
-            self.time_quiesce += perf_counter() - t
             return v
 
         key = hash(self.board)
-
-        t = perf_counter()
         cached = self._tt_lookup(key, depth, alpha, beta, True)
-        self.time_tt += perf_counter() - t
+        
 
         if cached is not None:
             return cached
@@ -183,10 +176,8 @@ class Searcher():
                     self.history[move] += depth * depth
                 break
             heapq.heappop(moves)
-
-        t = perf_counter()
         self._cache(key, depth, best_value, best_move, orig_alpha, beta, True)
-        self.time_tt += perf_counter() - t
+        
 
         return best_value
 
@@ -198,10 +189,8 @@ class Searcher():
             return self._terminal_score(ply)
 
         key = hash(self.board)
-
-        t = perf_counter()
         cached = self._tt_lookup(key, 0, alpha, beta, False)
-        self.time_tt += perf_counter() - t
+        
         if cached is not None:
             return cached
 
@@ -212,9 +201,7 @@ class Searcher():
             best_value = float("-inf")
             moves = self.board.legal_moves()
         else:
-            t = perf_counter()
             stand_pat = self.evaluate()
-            self.time_eval += perf_counter() - t
 
             if stand_pat >= beta:
                 return stand_pat
@@ -274,10 +261,8 @@ class Searcher():
                 self.beta_cutof += 1
                 break
             heapq.heappop(moves)
-
-        t = perf_counter()
         self._cache(key, 0, best_value, best_move, orig_alpha, beta, False)
-        self.time_tt += perf_counter() - t
+        
         return best_value
 
 
@@ -334,8 +319,8 @@ class Searcher():
         if victim is None or attacker is None:
             return 0
         piece_values = {
-            chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
-            chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 100,
+            bc.PAWN: 1, bc.KNIGHT: 3, bc.BISHOP: 3,
+            bc.ROOK: 5, bc.QUEEN: 9, bc.KING: 0,
         }
         return 100 * piece_values[victim.piece_type] - piece_values[attacker.piece_type]
 
