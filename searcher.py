@@ -389,7 +389,6 @@ if __name__ == "__main__":
     def benchmark():
         searcher = Searcher(board, Handcrafted)
         print(searcher.search(10))
-        print(searcher.seee.hits)
     
     profiler = cProfile.Profile()
     profiler.enable()
