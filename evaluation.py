@@ -175,6 +175,7 @@ class Handcrafted(Evaluation):
  
         if not move.promotion:
             self._move_pst(piece.piece_type, piece.color, move.origin.index(), move.destination.index())
+        
  
     def _move_pst(self, piece_type, color, from_sq, to_sq):
         if color == bc.WHITE:

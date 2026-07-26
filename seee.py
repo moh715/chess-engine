@@ -206,6 +206,8 @@ class SEEEvaluator:
         for _ in range(played):    
             self.board.undo()
         return gain
+
+        
 if __name__ == "__main__":
     board = bc.Board.from_fen("4k3/8/8/3p4/2P5/8/8/4K3 w - - 0 1")
     move = bc.Move(bc.C4, bc.D5)  

@@ -333,8 +333,8 @@ class Searcher():
             score += 700
         
         score += self.see(move)
-        if move.is_castling(self.board):
-            score += 50
+        # if move.is_castling(self.board):
+        #     score += 50
         if move.promotion:
             score += 100 + (move.promotion == bc.QUEEN) * 90
         score += self.history[move]
@@ -387,8 +387,8 @@ if __name__ == "__main__":
     
     board = bc.Board()
     def benchmark():
-        searcher = Searcher(board, Handcrafted)
-        print(searcher.search(10))
+        searcher = Searcher(board, NNEvaluation)
+        print(searcher.search(7))
     
     profiler = cProfile.Profile()
     profiler.enable()
