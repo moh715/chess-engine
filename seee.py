@@ -3,7 +3,14 @@ import bulletchess as bc
 
 
 class SEEEvaluator:
-    
+    PIECE_VALUES = {
+        bc.PAWN: 100,
+        bc.ROOK: 500,
+        bc.KNIGHT: 320,
+        bc.BISHOP: 330,
+        bc.QUEEN: 900,
+        bc.KING: 2000,
+    }
  
     def __init__(self, board: bc.Board, piece_values: dict = None):
         self.board = board
