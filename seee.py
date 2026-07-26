@@ -36,7 +36,7 @@ class SEEEvaluator:
         bc.BISHOP: 330,
         bc.ROOK: 500,
         bc.QUEEN: 900,
-        bc.KING: 2000,
+        bc.KING: 0,
     }
  
     RAYS = {}
@@ -189,72 +189,25 @@ class SEEEvaluator:
         most expensive part of this function when called repeatedly (e.g.
         during move ordering).
         """
-        from_sq = move.origin
-        to_sq = move.destination
-        key = (self.board, move)
-        if key in self._cache:
-            self.hits += 1
-            return self._cache[key]
-        if not assume_legal and move not in self.board.legal_moves():
-            self._cache[key] = 0
+        if not move.is_capture(self.board):
             return 0
-       
-        target = self.board[to_sq]
-        attacker = self.board[from_sq]
-        if attacker is None or target is None:
-            self._cache[key] = 0
-            return 0
- 
-        attacked_values = [self.pieces_values[target.piece_type]]
-        occ = (self.board[bc.WHITE] | self.board[bc.BLACK]) ^ from_sq
-        val_on_sq = (
-            self.pieces_values.get(move.promotion)
-            or self.pieces_values[attacker.piece_type]
-        )
-        color = attacker.color.opposite
- 
-        knights = self.board[bc.WHITE, bc.KNIGHT] | self.board[bc.BLACK, bc.KNIGHT]
-        kings = self.board[bc.WHITE, bc.KING] | self.board[bc.BLACK, bc.KING]
-        bishops_queens = (
-            self.board[bc.WHITE, bc.BISHOP] | self.board[bc.BLACK, bc.BISHOP]
-            | self.board[bc.WHITE, bc.QUEEN] | self.board[bc.BLACK, bc.QUEEN]
-        )
-        rooks_queens = (
-            self.board[bc.WHITE, bc.ROOK] | self.board[bc.BLACK, bc.ROOK]
-            | self.board[bc.WHITE, bc.QUEEN] | self.board[bc.BLACK, bc.QUEEN]
-        )
-        white_pawns = self.board[bc.WHITE, bc.PAWN]
-        black_pawns = self.board[bc.BLACK, bc.PAWN]
-        piece_bbs = (knights, kings, bishops_queens, rooks_queens, white_pawns, black_pawns)
- 
-        king_sq_by_color = {
-            bc.WHITE: next(iter(self.board[bc.WHITE, bc.KING]), None),
-            bc.BLACK: next(iter(self.board[bc.BLACK, bc.KING]), None),
-        }
- 
+        gain = self.pieces_values[self.board[move.destination].piece_type]
+        us = self.board.turn
+        played = 1
+        self.board.apply(move)
         while True:
-            lva_sq = self._lva_sq(color, to_sq, occ, piece_bbs, king_sq_by_color[color])
-            if lva_sq is None:
+            moves = [m for m in self.board.legal_moves() if m.destination == move.destination]
+            if not moves:
                 break
-            lva = self.board[lva_sq]
- 
-            if lva.piece_type == bc.KING:
-                remaining_enemy = (
-                    self._attackers(to_sq, occ ^ lva_sq, piece_bbs) & self.board[color.opposite]
-                )
-                if remaining_enemy:
-                    break
- 
-            attacked_values.append(val_on_sq)
-            val_on_sq = self.pieces_values[lva.piece_type]
-            occ ^= lva_sq
-            color = color.opposite
- 
-        gain = attacked_values[-1]
-        for i in range(len(attacked_values) - 2, -1, -1):
-            gain = attacked_values[i] - max(0, gain)
-        self._cache[key] = gain
+            played += 1
+            next_move = min(moves, key=lambda m: self.pieces_values[self.board[m.origin].piece_type])
+            gain += self.pieces_values[self.board[next_move.origin].piece_type] if self.board.turn == us else -self.pieces_values[self.board[next_move.origin].piece_type]
+            self.board.apply(next_move)
+        for _ in range(played):    
+            self.board.undo()
         return gain
+
+        
 if __name__ == "__main__":
     board = bc.Board.from_fen("4k3/8/8/3p4/2P5/8/8/4K3 w - - 0 1")
     move = bc.Move(bc.C4, bc.D5)  

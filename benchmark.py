@@ -44,6 +44,7 @@ def single_move_benchmark(depth, eval):
         print("TT hit rate:", round(100 * searcher.tt_hits / searcher.tt_lookups, 2), "%")
     print(f"score: {score} move:{move}")
 
+
 def game_benchmark(depth, eval):
     board = bc.Board()
     searcher = Searcher(board, eval)
