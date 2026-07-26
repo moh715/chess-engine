@@ -23,7 +23,7 @@ class Searcher():
         self.qtt = {}
         self.killer = [[None, None] for _ in range(MAX_DEPTH)]
         self.history = defaultdict(int)
-        self.WINDOW_MARGIN = evaluation.window_margin
+        self.WINDOW_MARGIN = self.evaluate.window_margin
         self.pieces_values ={
                     bc.PAWN: 100, bc.KNIGHT: 320, bc.BISHOP: 300,
                     bc.ROOK: 500, bc.QUEEN: 900, bc.KING: 100,
@@ -208,7 +208,7 @@ class Searcher():
             alpha = max(alpha, stand_pat)
             best_value = stand_pat
 
-            if stand_pat + self.evaluate.queen< alpha:
+            if stand_pat + self.evaluate.queen < alpha:
                 self._cache(key, 0, best_value, None, orig_alpha, beta, False)
                 return best_value
 
@@ -389,7 +389,6 @@ if __name__ == "__main__":
     def benchmark():
         searcher = Searcher(board, Handcrafted)
         print(searcher.search(10))
-        print(searcher.seee.hits)
     
     profiler = cProfile.Profile()
     profiler.enable()

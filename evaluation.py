@@ -1,4 +1,5 @@
-import chess
+from typing import override
+
 import os
 from positions import EG_MAP, MG_MAP
 from tensorflow.keras.models import load_model
@@ -26,13 +27,47 @@ class ScoreType(Enum):
     CENTIPAWNS = auto()
     NORMALIZED = auto()
 
+from abc import ABC, abstractmethod
+
+class Evaluation(ABC):
+    @property
+    @abstractmethod
+    def scope_type(self):
+        ...
+
+    @property
+    @abstractmethod
+    def window_margin(self):
+        ...
+    @property
+    @abstractmethod
+    def queen(self):
+        ...
+
+    @abstractmethod
+    def __call__(self):
+        ...
+    @abstractmethod
+    def do(self, move):
+        ...
+    @abstractmethod
+    def undo(self):
+        ...
 
 
-
-class Handcrafted:
-    scope_type = ScoreType.CENTIPAWNS
-    window_margin = 70
-    queen = 900
+class Handcrafted(Evaluation):
+    @property
+    @override
+    def scope_type(self):
+        return ScoreType.CENTIPAWNS
+    @property
+    @override
+    def window_margin(self):
+        return 70
+    @property
+    @override
+    def queen(self):
+        return 900
     piece_values = {
         bc.PAWN: 100,
         bc.ROOK: 500,
@@ -196,10 +231,21 @@ class Handcrafted:
             )
         return phase
 
-class NNEvaluation():
-    scope_type = ScoreType.NORMALIZED
-    window_margin = .05
-    queen = .98
+class NNEvaluation(Evaluation):
+    @property
+    @override
+    def scope_type(self):
+        return ScoreType.NORMALIZED
+
+    @property
+    @override
+    def window_margin(self):
+        return 0.05
+
+    @property
+    @override
+    def queen(self):
+        return 0.98
     MAX_PIECES = 32
     PIECE_TYPE_TO_IDX = {
         bc.PAWN: 0,
@@ -209,15 +255,25 @@ class NNEvaluation():
         bc.QUEEN: 4,
     }
 
-    def __init__(self, model=None) -> None:
+    def __init__(self, board:bc.Board, model=None) -> None:
         self.model = model
+        self.board = board
         if not model:
             self.model = load_model("chess.keras")
-    @function
-    def __call__(self, board: bc.Board):
-        us_idx, them_idx = self.board_to_halfkp(board)
+    def __call__(self):
+        us_idx, them_idx = self.board_to_halfkp()
         us_idx = self.pad_indices(us_idx)[None, :]
         them_idx = self.pad_indices(them_idx)[None, :]
+        return self._model_call(us_idx, them_idx)
+        
+    def do(self, move:bc.Move):
+        pass
+
+    @override
+    def undo(self):
+        pass
+    @function
+    def _model_call(self, us_idx, them_idx):
         out = float(self.model({"us_idx": us_idx, "them_idx": them_idx}, training=False)[0, 0])
         return out
 
@@ -243,12 +299,12 @@ class NNEvaluation():
             indices.append(k * 640 + p_idx * 64 + sq)
         return indices
 
-    def board_to_halfkp(self, board: bc.Board):
-        us_is_white = board.turn == bc.WHITE
-        king_sq_white = next(iter(board[bc.WHITE, bc.KING])).index()
-        king_sq_black = next(iter(board[bc.BLACK, bc.KING])).index()
-        us_idx = self.halfkp_from_board(board, king_sq_white, king_sq_black, us_is_white)
-        them_idx = self.halfkp_from_board(board, king_sq_white, king_sq_black, not us_is_white)
+    def board_to_halfkp(self):
+        us_is_white = self.board.turn == bc.WHITE
+        king_sq_white = next(iter(self.board[bc.WHITE, bc.KING])).index()
+        king_sq_black = next(iter(self.board[bc.BLACK, bc.KING])).index()
+        us_idx = self.halfkp_from_board(self.board, king_sq_white, king_sq_black, us_is_white)
+        them_idx = self.halfkp_from_board(self.board, king_sq_white, king_sq_black, not us_is_white)
         return np.array(us_idx, dtype=np.int32), np.array(them_idx, dtype=np.int32)
 
     def pad_indices(self, idx):
