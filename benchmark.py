@@ -42,6 +42,7 @@ def single_move_benchmark(depth, eval):
     stats.print_stats(25)
     if searcher.tt_lookups:
         print("TT hit rate:", round(100 * searcher.tt_hits / searcher.tt_lookups, 2), "%")
+    print(f"score:{score} move:{move}")
 
 
 def game_benchmark(depth, eval):
@@ -250,4 +251,4 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
             "%"
         )
 
-single_move_benchmark(10, Handcrafted)
+single_move_benchmark(7, Handcrafted)
