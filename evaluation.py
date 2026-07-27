@@ -261,10 +261,19 @@ class NNEvaluation(Evaluation):
         self.board = board
         if not model:
             self.model = load_model("chess.keras")
+        self.embedding = self.model.get_layer("embedding").get_weights()[0]
+        
+        self.weights = []
+        self.biases = []
+        
+        for i in range(5):
+            W, b = self.model.get_layer(f"dense{'' if i == 0 else '_' + str(i)}").get_weights()
+            self.weights.append(W)
+            self.biases.append(b)
     def __call__(self):
         us_idx, them_idx = self.board_to_halfkp()
-        us_idx = self.pad_indices(us_idx)[None, :]
-        them_idx = self.pad_indices(them_idx)[None, :]
+        # us_idx = self.pad_indices(us_idx)[None, :]
+        # them_idx = self.pad_indices(them_idx)[None, :]
         return self._model_call(us_idx, them_idx)
         
     def do(self, move:bc.Move):
@@ -273,11 +282,19 @@ class NNEvaluation(Evaluation):
     @override
     def undo(self):
         pass
-    @function
-    def _model_call(self, us_idx, them_idx):
-        out = float(self.model({"us_idx": us_idx, "them_idx": them_idx}, training=False)[0, 0])
-        return out
 
+
+        
+    def _model_call(self, us_idx, them_idx):
+        acc_us = self.embedding[us_idx].sum(axis=0)
+        acc_them = self.embedding[them_idx].sum(axis=0)
+        x = np.concatenate([acc_us, acc_them])
+        
+        for W, b in zip(self.weights, self.biases):
+            x = np.maximum(x @ W + b, 0)
+        return x
+
+        
     def mirror_sq(self, square: int) -> int:
         return square ^ 56
 
