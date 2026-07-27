@@ -19,8 +19,11 @@ class SEEEvaluator:
         self.hits = 0
  
     def see(self, move: bc.Move, assume_legal: bool = False) -> int:
-        
+        key = (self.board, move)
+        if key in self._cache:
+            return self._cache[key]
         if not move.is_capture(self.board):
+            self._cache[key] = 0
             return 0
         gain = self.pieces_values[self.board[move.destination].piece_type]
         us = self.board.turn
@@ -36,6 +39,7 @@ class SEEEvaluator:
             self.board.apply(next_move)
         for _ in range(played):    
             self.board.undo()
+        self._cache[key] = gain
         return gain
 
         

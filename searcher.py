@@ -214,6 +214,7 @@ class Searcher():
 
             moves = []
             for move in self.board.legal_moves():
+                
                 if not (move.is_capture(self.board) or move.promotion):
                     continue
 
@@ -221,8 +222,8 @@ class Searcher():
                 gain = pv[victim.piece_type] if victim else 0
                 if move.promotion:
                     gain += pv[move.promotion]
-
-                if stand_pat + gain + 200 < alpha:
+                
+                if stand_pat + gain + self.WINDOW_MARGIN * 2 < alpha:
                     continue
                 if self.see(move) < 0:
                     continue
@@ -331,8 +332,8 @@ class Searcher():
             score += 1000
         if move in killer:
             score += 700
-        
-        score += self.see(move)
+        else:
+            score += self.see(move)
         # if move.is_castling(self.board):
         #     score += 50
         if move.promotion:
@@ -342,11 +343,11 @@ class Searcher():
 
 
     def _get_reduction(self, move: bc.Move, number: int, depth: int) -> int:
-        if move.is_capture(self.board):
+        if number <= 5:
             return 0
         if self._gives_check(move):
             return 0
-        if number <= 5:
+        if move.is_capture(self.board):
             return 0
         if depth  <= 3:
             return 0
