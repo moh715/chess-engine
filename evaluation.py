@@ -116,7 +116,7 @@ class Handcrafted(Evaluation):
     def do(self, move: bc.Move):
         if not self.score_builded:
             self.build()
-        if move not in self.board.legal_moves():
+        if self.board[move.destination] is None:
             raise ValueError("move is Ilegal")
  
         self.moves.append((self.phase, self.piece_score, self.mg_score, self.eg_score))
