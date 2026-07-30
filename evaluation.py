@@ -116,7 +116,7 @@ class Handcrafted(Evaluation):
     def do(self, move: bc.Move):
         if not self.score_builded:
             self.build()
-        if move not in self.board.legal_moves():
+        if self.board[move.origin] is None:
             raise ValueError("move is Ilegal")
  
         self.moves.append((self.phase, self.piece_score, self.mg_score, self.eg_score))
@@ -235,7 +235,6 @@ class Handcrafted(Evaluation):
 
 
         
-
 class NNEvaluation(Evaluation):
     @property
     @override
@@ -251,6 +250,7 @@ class NNEvaluation(Evaluation):
     @override
     def queen(self):
         return 0.98
+
     MAX_PIECES = 32
     PIECE_TYPE_TO_IDX = {
         bc.PAWN: 0,
@@ -260,181 +260,177 @@ class NNEvaluation(Evaluation):
         bc.QUEEN: 4,
     }
 
-    def __init__(self, board:bc.Board, model=None) -> None:
+    def __init__(self, board: bc.Board, model=None) -> None:
         self.model = model
         self.board = board
         if not model:
             self.model = load_model("chess.keras")
         self.embedding = self.model.get_layer("embedding").get_weights()[0]
-        
+
         self.weights = []
         self.biases = []
         self.score_builded = False
-        self.accumulator = np.array([])
+        self.accumulator = 0
+
         self.moves = []
-        self._do_cache = {}
-        
+
+        self.half_dim = self.embedding.shape[1]
+        self._white_slice = slice(0, self.half_dim)
+        self._black_slice = slice(self.half_dim, 2 * self.half_dim)
+
+        self.king_sq_white = None
+        self.king_sq_black = None
+
+        self._castle_rook_squares = {
+            bc.WHITE_KINGSIDE:  (bc.H1.index(), bc.F1.index()),
+            bc.WHITE_QUEENSIDE: (bc.A1.index(), bc.D1.index()),
+            bc.BLACK_KINGSIDE:  (bc.H8.index(), bc.F8.index()),
+            bc.BLACK_QUEENSIDE: (bc.A8.index(), bc.D8.index()),
+        }
+
         for i in range(5):
             W, b = self.model.get_layer(f"dense{'' if i == 0 else '_' + str(i)}").get_weights()
             self.weights.append(W)
             self.biases.append(b)
 
-            
     def __call__(self):
         if not self.score_builded:
             self.build()
         return self._model_call()
-        
-    def _model_call(self):
-        x = self.accumulator 
-        
-        for i in range(len(self.weights) - 1):
-           x = np.maximum(x @ self.weights[i] + self.biases[i], 0)
-       
-        x = x @ self.weights[-1] + self.biases[-1]
-        return float(x[0])
 
+    def _model_call(self):
+        x = self.accumulator
+        for i in range(len(self.weights) - 1):
+            x =np.maximum(x @ self.weights[i] + self.biases[i], 0)
+        x = x @ self.weights[-1] + self.biases[-1]
+        return x
 
     def mirror_sq(self, square: int) -> int:
-            return square ^ 56
+        return square ^ 56
+
     def orient(self, square: int, perspective_is_white: bool) -> int:
-            return square if perspective_is_white else self.mirror_sq(square)
-    def halfkp_from_board(self, board: bc.Board, king_sq_white: int, king_sq_black: int, perspective_is_white: bool):
-            king_sq = king_sq_white if perspective_is_white else king_sq_black
-            k = self.orient(king_sq, perspective_is_white)
-            indices = []
-            for square in bc.SQUARES:
-                piece = board[square]
-                if piece is None or piece.piece_type == bc.KING:
-                    continue
-                ptype = self.PIECE_TYPE_TO_IDX[piece.piece_type]
-                is_white = piece.color == bc.WHITE
-                relative = 0 if is_white == perspective_is_white else 1
-                p_idx = relative * 5 + ptype
-                sq = self.orient(square.index(), perspective_is_white)
-                indices.append(k * 640 + p_idx * 64 + sq)
-            return indices
-    
+        return square if perspective_is_white else self.mirror_sq(square)
 
-    def _feature_index(self, piece_type, piece_color, square,
-                        king_sq_white, king_sq_black, perspective_is_white):
-        """Same index formula used in halfkp_from_board, but for a single piece."""
-        king_sq = king_sq_white if perspective_is_white else king_sq_black
+
+    def _feature_index(self, perspective_is_white, king_sq, piece_type, piece_color, square_idx):
         k = self.orient(king_sq, perspective_is_white)
-        is_white = piece_color == bc.WHITE
-        relative = 0 if is_white == perspective_is_white else 1
+        relative = 0 if (piece_color == bc.WHITE) == perspective_is_white else 1
         p_idx = relative * 5 + self.PIECE_TYPE_TO_IDX[piece_type]
-        sq = self.orient(square, perspective_is_white)
+        sq = self.orient(square_idx, perspective_is_white)
         return k * 640 + p_idx * 64 + sq
-    
-    def _remove_piece(self, piece_type, piece_color, square, king_sq_white, king_sq_black):
-        white_idx = self._feature_index(piece_type, piece_color, square,
-                                          king_sq_white, king_sq_black, True)
-        black_idx = self._feature_index(piece_type, piece_color, square,
-                                          king_sq_white, king_sq_black, False)
-        self.accumulator[:256]  -= self.embedding[white_idx]
-        self.accumulator[256:]  -= self.embedding[black_idx]
-        
-    
-    def _add_piece(self, piece_type, piece_color, square, king_sq_white, king_sq_black):
-        
-        white_idx = self._feature_index(piece_type, piece_color, square,
-                                          king_sq_white, king_sq_black, True)
-        black_idx = self._feature_index(piece_type, piece_color, square,
-                                          king_sq_white, king_sq_black, False)
-        self.accumulator[:256]  += self.embedding[white_idx]
-        self.accumulator[256:]  += self.embedding[black_idx]
 
+    def _add(self, perspective_is_white, king_sq, piece_type, piece_color, square_idx):
+        idx = self._feature_index(perspective_is_white, king_sq, piece_type, piece_color, square_idx)
+        sl = self._white_slice if perspective_is_white else self._black_slice
+        self.accumulator[sl] += self.embedding[idx]
 
-        
+    def _remove(self, perspective_is_white, king_sq, piece_type, piece_color, square_idx):
+        idx = self._feature_index(perspective_is_white, king_sq, piece_type, piece_color, square_idx)
+        sl = self._white_slice if perspective_is_white else self._black_slice
+        self.accumulator[sl] -= self.embedding[idx]
+
+    def _build_half(self, perspective_is_white, king_sq):
+        """Recompute one perspective's half from scratch by scanning the board.
+        Needed on the initial build(), and afterwards only for whichever half's
+        own king just moved — that half's anchor square changed, so every one
+        of its feature indices is stale and there's nothing worth patching."""
+        k = self.orient(king_sq, perspective_is_white)
+        indices = []
+        for color in (bc.WHITE, bc.BLACK):
+            relative = 0 if (color == bc.WHITE) == perspective_is_white else 1
+            for piece_type, p in self.PIECE_TYPE_TO_IDX.items():
+                p_idx = relative * 5 + p
+                for square in self.board[color, piece_type]:  # C-backed bitboard iteration
+                    sq = self.orient(square.index(), perspective_is_white)
+                    indices.append(k * 640 + p_idx * 64 + sq)
+        half = (self.embedding[indices].sum(axis=0) if indices
+                else np.zeros(self.half_dim, dtype=self.embedding.dtype))
+        sl = self._white_slice if perspective_is_white else self._black_slice
+        self.accumulator[sl] = half
+
     def build(self):
-        king_sq_white = next(iter(self.board[bc.WHITE, bc.KING])).index()
-        king_sq_black = next(iter(self.board[bc.BLACK, bc.KING])).index()
-        us_idx = self.halfkp_from_board(self.board, king_sq_white, king_sq_black, True)
-        them_idx = self.halfkp_from_board(self.board, king_sq_white, king_sq_black, False)
-        white_acc = self.embedding[us_idx].sum(axis=0)
-        black_acc = self.embedding[them_idx].sum(axis=0)
-        self.accumulator = np.concatenate([white_acc, black_acc])
+        self.king_sq_white = next(iter(self.board[bc.WHITE, bc.KING])).index()
+        self.king_sq_black = next(iter(self.board[bc.BLACK, bc.KING])).index()
+        self.accumulator = np.zeros(2 * self.half_dim, dtype=self.embedding.dtype)
+        self._build_half(True, self.king_sq_white)
+        self._build_half(False, self.king_sq_black)
         self.score_builded = True
 
-        
-    def _half_build(self, is_white):
-        king_sq_white = next(iter(self.board[bc.WHITE, bc.KING])).index()
-        king_sq_black = next(iter(self.board[bc.BLACK, bc.KING])).index()
-        idx = self.halfkp_from_board(self.board, king_sq_white, king_sq_black, is_white) 
-        acc = self.embedding[idx].sum(axis=0)
-        if is_white:
-            self.accumulator[:256] = acc
-        else:
-            self.accumulator[256:] = acc
-
+    # ---- do / undo ----------------------------------------------------------
 
     @override
     def do(self, move: bc.Move):
         if not self.score_builded:
             self.build()
-        if move not in self.board.legal_moves():
-            raise ValueError("move is Ilegal")
-    
-        key = (hash(self.board), move)
-        moving_piece = self.board[move.origin]
-    
-        self.moves.append(self.accumulator.copy())
-        if key in self._do_cache:
-            self.accumulator = self._do_cache[key]
-            return
-    
-        if moving_piece.piece_type == bc.KING:
-            self.board.apply(move)
-            self._half_build(moving_piece.color == bc.WHITE)
-            self.board.undo()
-            self._do_cache[key] = self.accumulator.copy()
 
-            return
-    
-        king_sq_white = next(iter(self.board[bc.WHITE, bc.KING])).index()
-        king_sq_black = next(iter(self.board[bc.BLACK, bc.KING])).index()
-    
-        is_capture = move.is_capture(self.board)
-    
-        if is_capture:
-            dest_piece = self.board[move.destination]
-            if dest_piece is None:
-                captured_index = (move.origin.index() // 8) * 8 + (move.destination.index() % 8)
-                captured_square = bc.SQUARES[captured_index]
+        origin_idx = move.origin.index()
+        dest_idx = move.destination.index()
+        moving_piece = self.board[move.origin]
+        assert moving_piece is not None, "do() called with an empty origin square"
+        moving_type = moving_piece.piece_type
+        moving_color = moving_piece.color
+        king_moved = moving_type == bc.KING
+
+        # What's being captured, if anything (read from the pre-move board).
+        captured_piece = None
+        captured_sq_idx = None
+        if move.is_capture(self.board):
+            dest_content = self.board[move.destination]
+            if dest_content is None:
+                # En passant: the captured pawn sits beside the destination, not on it.
+                captured_sq_idx = (origin_idx // 8) * 8 + (dest_idx % 8)
+                captured_piece = self.board[bc.SQUARES[captured_sq_idx]]
             else:
-                captured_square = move.destination
-            captured_piece = self.board[captured_square]
-            self._remove_piece(captured_piece.piece_type, captured_piece.color,
-                                captured_square.index(), king_sq_white, king_sq_black)
-    
-        self._remove_piece(moving_piece.piece_type, moving_piece.color,
-                            move.origin.index(), king_sq_white, king_sq_black)
-    
-        if move.promotion:
-            piece_type = move.promotion
-        else:
-            piece_type = moving_piece.piece_type
-        
-        self._add_piece(
-            piece_type,
-            moving_piece.color,
-            move.destination.index(),
-            king_sq_white,
-            king_sq_black,
-        )
-        self._do_cache[key] = self.accumulator.copy()
-        
-        
+                captured_sq_idx = dest_idx
+                captured_piece = dest_content
+
+        # Castling drags the rook along too.
+        castle_rook_squares = None
+        if king_moved:
+            ctype = move.castling_type(self.board)
+            if ctype is not None:
+                castle_rook_squares = self._castle_rook_squares[ctype]
+
+        self.moves.append((self.accumulator.copy(), self.king_sq_white, self.king_sq_black))
+
+        promo = move.promotion
+        dest_type = promo if promo is not None else moving_type
+        own_half_is_white = (moving_color == bc.WHITE) if king_moved else None
+
+        for persp_is_white, king_sq in ((True, self.king_sq_white), (False, self.king_sq_black)):
+            if king_moved and persp_is_white == own_half_is_white:
+                # This half's own king just moved -- fully rebuilt below instead.
+                continue
+
+            if captured_piece is not None:
+                self._remove(persp_is_white, king_sq, captured_piece.piece_type,
+                              captured_piece.color, captured_sq_idx)
+
+            if not king_moved:
+                # Kings are never encoded as features, so a king move has nothing
+                # to add/remove here -- only capture/rook-drag side effects matter.
+                self._remove(persp_is_white, king_sq, moving_type, moving_color, origin_idx)
+                self._add(persp_is_white, king_sq, dest_type, moving_color, dest_idx)
+
+            if castle_rook_squares is not None:
+                r_from, r_to = castle_rook_squares
+                self._remove(persp_is_white, king_sq, bc.ROOK, moving_color, r_from)
+                self._add(persp_is_white, king_sq, bc.ROOK, moving_color, r_to)
+
+        if king_moved:
+            self.board.apply(move)
+            self._build_half(own_half_is_white, dest_idx)
+            self.board.undo()
+            if own_half_is_white:
+                self.king_sq_white = dest_idx
+            else:
+                self.king_sq_black = dest_idx
+
     @override
     def undo(self):
         if not self.moves:
             raise IndexError("nothing to undo")
-        self.accumulator = self.moves.pop()     
-
-        
-    
-
+        self.accumulator, self.king_sq_white, self.king_sq_black = self.moves.pop()
     
 
 

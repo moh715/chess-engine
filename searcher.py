@@ -387,8 +387,8 @@ if __name__ == "__main__":
     
     board = bc.Board()
     def benchmark():
-        searcher = Searcher(board, NNEvaluation)
-        print(searcher.search(7))
+        searcher = Searcher(board, Handcrafted)
+        print(searcher.search(10))
 
     
     profiler = cProfile.Profile()
