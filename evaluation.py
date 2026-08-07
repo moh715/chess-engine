@@ -3,7 +3,6 @@ from typing import override
 import os
 from positions import EG_MAP, MG_MAP
 from tensorflow.keras.models import load_model
-from tensorflow import function
 from tensorflow import expand_dims
 import numpy as np
 import math
@@ -44,6 +43,9 @@ class Evaluation(ABC):
     def queen(self):
         ...
 
+    def set_board(self, board):
+        self.board = board
+        
     @abstractmethod
     def __call__(self):
         ...
@@ -77,7 +79,7 @@ class Handcrafted(Evaluation):
         bc.KING: 2000,
     }
  
-    def __init__(self, board: bc.Board) -> None:
+    def __init__(self, board: bc.Board = None) -> None:
         self.score = 0
         self.moves = []
         self.board = board
@@ -260,11 +262,11 @@ class NNEvaluation(Evaluation):
         bc.QUEEN: 4,
     }
 
-    def __init__(self, board: bc.Board, model=None) -> None:
+    def __init__(self, board: bc.Board = None, model=None) -> None:
         self.model = model
         self.board = board
         if not model:
-            self.model = load_model("chess.keras")
+            self.model = load_model("best_chesseval(1).keras")
         self.embedding = self.model.get_layer("embedding").get_weights()[0]
 
         self.weights = []
@@ -288,7 +290,7 @@ class NNEvaluation(Evaluation):
             bc.BLACK_QUEENSIDE: (bc.A8.index(), bc.D8.index()),
         }
 
-        for i in range(5):
+        for i in range(4):
             W, b = self.model.get_layer(f"dense{'' if i == 0 else '_' + str(i)}").get_weights()
             self.weights.append(W)
             self.biases.append(b)
@@ -296,12 +298,22 @@ class NNEvaluation(Evaluation):
     def __call__(self):
         if not self.score_builded:
             self.build()
-        return self._model_call()
+        return self._model_call()[0]
 
     def _model_call(self):
-        x = self.accumulator
+        # The network expects the side-to-move's perspective first.
+        # If it's Black's turn, we must swap the White and Black halves.
+        if self.board.turn == bc.WHITE:
+            x = self.accumulator
+        else:
+            # Concatenate Black's half followed by White's half
+            x = np.concatenate([
+                self.accumulator[self._black_slice],
+                self.accumulator[self._white_slice]
+            ])
+            
         for i in range(len(self.weights) - 1):
-            x =np.maximum(x @ self.weights[i] + self.biases[i], 0)
+            x = np.maximum(x @ self.weights[i] + self.biases[i], 0)
         x = x @ self.weights[-1] + self.biases[-1]
         return x
 
@@ -371,20 +383,17 @@ class NNEvaluation(Evaluation):
         moving_color = moving_piece.color
         king_moved = moving_type == bc.KING
 
-        # What's being captured, if anything (read from the pre-move board).
         captured_piece = None
         captured_sq_idx = None
         if move.is_capture(self.board):
             dest_content = self.board[move.destination]
             if dest_content is None:
-                # En passant: the captured pawn sits beside the destination, not on it.
                 captured_sq_idx = (origin_idx // 8) * 8 + (dest_idx % 8)
                 captured_piece = self.board[bc.SQUARES[captured_sq_idx]]
             else:
                 captured_sq_idx = dest_idx
                 captured_piece = dest_content
 
-        # Castling drags the rook along too.
         castle_rook_squares = None
         if king_moved:
             ctype = move.castling_type(self.board)
@@ -407,8 +416,6 @@ class NNEvaluation(Evaluation):
                               captured_piece.color, captured_sq_idx)
 
             if not king_moved:
-                # Kings are never encoded as features, so a king move has nothing
-                # to add/remove here -- only capture/rook-drag side effects matter.
                 self._remove(persp_is_white, king_sq, moving_type, moving_color, origin_idx)
                 self._add(persp_is_white, king_sq, dest_type, moving_color, dest_idx)
 

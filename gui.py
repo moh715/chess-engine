@@ -207,7 +207,7 @@ def start_game():
     else:
         board = bc.Board()
 
-    searcher = Searcher(board, EVAL_FUNCS[eval_name])
+    searcher = Searcher(board, EVAL_FUNCS[eval_name]())
     selected = None
     legal_targets = []
     status_msg = ""

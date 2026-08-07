@@ -1,6 +1,7 @@
 import random
 import time
 
+from tensorflow.keras.models import load_model
 import cProfile
 import pstats
 from evaluation import Handcrafted, NNEvaluation
@@ -143,13 +144,13 @@ def multi_fen_benchmark(depth, eval):
 
 def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
     pieces ={
-            chess.PAWN,
-            chess.ROOK,
-            chess.KNIGHT,
-            chess.BISHOP,
-            chess.QUEEN,
-            chess.KING
-        }
+        bc.PAWN,
+        bc.ROOK,
+        bc.KNIGHT,
+        bc.BISHOP,
+        bc.QUEEN,
+        bc.KING
+    }
     
     eval1_wins = 0
     eval2_wins = 0
@@ -160,8 +161,8 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
         black = {}
         for p in pieces:
     
-            white[p] =   len(board.pieces(p, chess.WHITE))
-            black[p] = len(board.pieces(p, chess.BLACK))
+            white[p] =   len(board.pieces(p, bc.WHITE))
+            black[p] = len(board.pieces(p, bc.BLACK))
         return white, black
     
     
@@ -171,60 +172,56 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
     
         # Alternate colors
         if game_num % 2 == 0:
-            white_eval = eval_fns[0]()
-            black_eval = eval_fns[1]() 
+            white_eval = eval_fns[0]
+            black_eval = eval_fns[1] 
             eval1_is_white = True
         else:
-            white_eval = eval_fns[1]()
-            black_eval = eval_fns[0]()
+            white_eval = eval_fns[1]
+            black_eval = eval_fns[0]
             eval1_is_white = False
     
         move_count = 0
         white_searcher = Searcher(board, white_eval)
         black_searcher = Searcher(board, black_eval)
-        while not board.is_game_over():
-            if board.turn == chess.WHITE:
+        while not board in bc.MATE:
+            if board.turn == bc.WHITE:
                 _, move = white_searcher.search(depth)
             else:
                 _, move = black_searcher.search(depth)
             if move is None:
                 break
     
-            board.push(move)
+            board.apply(move)
             move_count += 1
     
-        outcome = board.outcome()
     
-        if outcome is None or outcome.winner is None:
+        if board in bc.DRAW:
             draws += 1
+            print("Draw:", board.outcome().termination)
+            white, black = pieces_count(board)
+            eval1_count = white if eval1_is_white else black
+            eval2_count = black if eval1_is_white else white
+            print(f"eval1:{eval1_count}")
+            print(f"eval2:{eval2_count}")
+            print(f"fen: {board.fen()}")
+            print(f"white is eval1:{eval1_is_white}")
+            turn = "white" if board.turn == bc.WHITE else "black"
+            print(f"turn: {turn}")
+            print(f"eval1: {eval_fns[0](board)}")
+            print(f"eval2: {eval_fns[1](board)}")
     
-            if outcome is None:
-                print("Unknown result")
-            elif outcome.winner is None:
-                print("Draw:", outcome.termination)
-                white, black = pieces_count(board)
-                eval1_count = white if eval1_is_white else black
-                eval2_count = black if eval1_is_white else white
-                print(f"eval1:{eval1_count}")
-                print(f"eval2:{eval2_count}")
-                print(f"fen: {board.fen()}")
-                print(f"white is eval1:{eval1_is_white}")
-                turn = "white" if board.turn == chess.WHITE else "black"
-                print(f"turn: {turn}")
-                print(f"eval1: {evaluate(board)}")
-                print(f"eval2: {evaluate2(board)}")
-    
-        elif outcome.winner == chess.WHITE:
-            if eval1_is_white:
-                eval1_wins += 1
+        elif board in bc.CHECKMATE:
+            if board.turn == bc.BLACK:
+                if eval1_is_white:
+                    eval1_wins += 1
+                else:
+                    eval2_wins += 1
             else:
-                eval2_wins += 1
-    
-        else:  # Black won
-            if eval1_is_white:
-                eval2_wins += 1
-            else:
-                eval1_wins += 1
+                if eval1_is_white:
+                    eval2_wins += 1
+                else:
+                    eval1_wins += 1
+            
     
         print(
             f"Game {game_num + 1}/{games} | "
@@ -251,4 +248,5 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
             "%"
         )
 
-single_move_benchmark(7, Handcrafted)
+# single_move_benchmark(7, Handcrafted)
+eval_vs_eval2(4, 10, [NNEvaluation(model=load_model("best_chesseval(1).keras")), NNEvaluation()])

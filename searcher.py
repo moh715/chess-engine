@@ -1,9 +1,9 @@
 from collections import defaultdict
 from time import perf_counter
 import heapq
-from evaluation import Handcrafted
+from evaluation import Evaluation, Handcrafted
 import bulletchess as bc
-from evaluation import Handcrafted, NNEvaluation
+from evaluation import Handcrafted, NNEvaluation, Evaluation
 from seee import SEEEvaluator
 
 META = 1e7
@@ -14,9 +14,10 @@ MAX_DEPTH = 20
 
 
 class Searcher():
-    def __init__(self, board: bc.Board, evaluation):
+    def __init__(self, board: bc.Board, evaluation: Evaluation):
         self.board = board
-        self.evaluate = evaluation(board)
+        self.evaluate = evaluation
+        self.evaluate.set_board(board)        
         self.seee = SEEEvaluator(board)
         self.see = self.seee.see
         self.tt = {}
