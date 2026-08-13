@@ -142,7 +142,7 @@ def multi_fen_benchmark(depth, eval):
     print()
     print("Moves:", moves)
 
-def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
+def eval_vs_eval2(depth, games, eval_fns=[Handcrafted(), NNEvaluation()]):
     pieces ={
         bc.PAWN,
         bc.ROOK,
@@ -249,4 +249,4 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
         )
 
 # single_move_benchmark(7, Handcrafted)
-eval_vs_eval2(4, 10, [NNEvaluation(model=load_model("best_chesseval(1).keras")), NNEvaluation()])
+eval_vs_eval2(3, 10)

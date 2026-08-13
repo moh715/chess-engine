@@ -1,13 +1,12 @@
 from typing import override
-
+import random
 import os
 from positions import EG_MAP, MG_MAP
 from tensorflow.keras.models import load_model
-from tensorflow import expand_dims
 import numpy as np
-import math
 from enum import Enum, auto
 import bulletchess as bc
+from numba import njit
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2" 
 
@@ -234,14 +233,112 @@ class Handcrafted(Evaluation):
             )
         return phase
 
-
-
+@njit(cache=True)
+def _numba_forward(acc, half_dim, is_white_turn, w0, b0, w1, b1, w2, b2, w3, b3):
+    if is_white_turn:
+        x = np.empty(2 * half_dim, dtype=np.float32)
+        x[:half_dim] = acc[:half_dim]
+        x[half_dim:] = acc[half_dim:]
+    else:
+        x = np.empty(2 * half_dim, dtype=np.float32)
+        x[:half_dim] = acc[half_dim:]
+        x[half_dim:] = acc[:half_dim]
         
+    x = np.dot(x, w0) + b0
+    x = np.maximum(x, 0)
+    x = np.dot(x, w1) + b1
+    x = np.maximum(x, 0)
+    x = np.dot(x, w2) + b2
+    x = np.maximum(x, 0)
+    x = np.dot(x, w3) + b3
+    return x[0]
+
+@njit(cache=True)
+def _numba_do(acc, emb, king_sq_w, king_sq_b, origin_idx, dest_idx, 
+              moving_type, moving_color, dest_type, 
+              is_capture, captured_type, captured_color, captured_sq, 
+              is_castle, r_from, r_to, king_moved, piece_type_to_idx):
+    
+    half_dim = emb.shape[1]
+    
+    # --- White Perspective ---
+    if not (king_moved and moving_color == 0):
+        kw = king_sq_w
+        if is_capture:
+            is_own = (captured_color == 0)
+            p_idx = 0 if is_own else 5
+            p_idx += piece_type_to_idx[captured_type]
+            idx = kw * 640 + p_idx * 64 + captured_sq
+            acc[:half_dim] -= emb[idx]
+        
+        if not king_moved:
+            is_own = (moving_color == 0)
+            p_idx = 0 if is_own else 5
+            p_idx += piece_type_to_idx[moving_type]
+            idx = kw * 640 + p_idx * 64 + origin_idx
+            acc[:half_dim] -= emb[idx]
+            
+            p_idx = 0 if is_own else 5
+            p_idx += piece_type_to_idx[dest_type]
+            idx = kw * 640 + p_idx * 64 + dest_idx
+            acc[:half_dim] += emb[idx]
+            
+        elif is_castle:  # <--- THIS BLOCK WAS ACCIDENTALLY DELETED
+            is_own = (moving_color == 0)
+            p_idx = 0 if is_own else 5
+            p_idx += piece_type_to_idx[3] # ROOK = 3
+            idx = kw * 640 + p_idx * 64 + r_from
+            acc[:half_dim] -= emb[idx]
+            idx = kw * 640 + p_idx * 64 + r_to
+            acc[:half_dim] += emb[idx]
+
+    # --- Black Perspective ---
+    if not (king_moved and moving_color == 1):
+        kb_mir = king_sq_b ^ 56
+        if is_capture:
+            sq = captured_sq ^ 56
+            is_own = (captured_color == 1)
+            p_idx = 0 if is_own else 5
+            p_idx += piece_type_to_idx[captured_type]
+            idx = kb_mir * 640 + p_idx * 64 + sq
+            acc[half_dim:] -= emb[idx]
+        
+        if not king_moved:
+            sq = origin_idx ^ 56
+            is_own = (moving_color == 1)
+            p_idx = 0 if is_own else 5
+            p_idx += piece_type_to_idx[moving_type]
+            idx = kb_mir * 640 + p_idx * 64 + sq
+            acc[half_dim:] -= emb[idx]
+            
+            sq = dest_idx ^ 56
+            p_idx = 0 if is_own else 5
+            p_idx += piece_type_to_idx[dest_type]
+            idx = kb_mir * 640 + p_idx * 64 + sq
+            acc[half_dim:] += emb[idx]
+            
+        elif is_castle:  # <--- THIS BLOCK WAS ACCIDENTALLY DELETED
+            is_own = (moving_color == 1)
+            p_idx = 0 if is_own else 5
+            p_idx += piece_type_to_idx[3] # ROOK = 3
+            idx = kb_mir * 640 + p_idx * 64 + (r_from ^ 56)
+            acc[half_dim:] -= emb[idx]
+            idx = kb_mir * 640 + p_idx * 64 + (r_to ^ 56)
+            acc[half_dim:] += emb[idx]
+            
+    if king_moved:
+        if moving_color == 0:
+            return dest_idx, king_sq_b
+        else:
+            return king_sq_w, dest_idx
+    return king_sq_w, king_sq_b
+
+# --- MAIN CLASS ---
 class NNEvaluation(Evaluation):
     @property
     @override
     def scope_type(self):
-        return ScoreType.NORMALIZED
+        return ScoreType.CENTIPAWNS  # Changed to Centipawns
 
     @property
     @override
@@ -254,121 +351,97 @@ class NNEvaluation(Evaluation):
         return 0.98
 
     MAX_PIECES = 32
-    PIECE_TYPE_TO_IDX = {
-        bc.PAWN: 0,
-        bc.KNIGHT: 1,
-        bc.BISHOP: 2,
-        bc.ROOK: 3,
-        bc.QUEEN: 4,
-    }
 
-    def __init__(self, board: bc.Board = None, model=None) -> None:
-        self.model = model
+    def __init__(self, board: bc.Board = None) -> None:
         self.board = board
-        if not model:
-            self.model = load_model("best_chesseval(1).keras")
-        self.embedding = self.model.get_layer("embedding").get_weights()[0]
+        
+        keras_model = load_model("chess.keras")
+        self.embedding = np.ascontiguousarray(keras_model.get_layer("embedding").get_weights()[0], dtype=np.float32)
 
-        self.weights = []
-        self.biases = []
         self.score_builded = False
-        self.accumulator = 0
-
-        self.moves = []
-
         self.half_dim = self.embedding.shape[1]
-        self._white_slice = slice(0, self.half_dim)
-        self._black_slice = slice(self.half_dim, 2 * self.half_dim)
-
+        
+        self.accumulator = np.zeros(2 * self.half_dim, dtype=np.float32)
+        
         self.king_sq_white = None
         self.king_sq_black = None
 
-        self._castle_rook_squares = {
-            bc.WHITE_KINGSIDE:  (bc.H1.index(), bc.F1.index()),
-            bc.WHITE_QUEENSIDE: (bc.A1.index(), bc.D1.index()),
-            bc.BLACK_KINGSIDE:  (bc.H8.index(), bc.F8.index()),
-            bc.BLACK_QUEENSIDE: (bc.A8.index(), bc.D8.index()),
+        self.PIECE_TYPE_TO_INT = {
+            bc.PAWN: 0, bc.KNIGHT: 1, bc.BISHOP: 2, bc.ROOK: 3, bc.QUEEN: 4, bc.KING: 5
         }
+        self.COLOR_TO_INT = {bc.WHITE: 0, bc.BLACK: 1}
+        
+        self.PIECE_TYPE_TO_IDX_NP = np.array([0, 1, 2, 3, 4, 0], dtype=np.int32)
 
-        for i in range(4):
-            W, b = self.model.get_layer(f"dense{'' if i == 0 else '_' + str(i)}").get_weights()
-            self.weights.append(W)
-            self.biases.append(b)
+        w0, b0 = keras_model.get_layer("dense").get_weights()
+        w1, b1 = keras_model.get_layer("dense_1").get_weights()
+        w2, b2 = keras_model.get_layer("dense_2").get_weights()
+        w3, b3 = keras_model.get_layer("dense_3").get_weights()
+        
+        self.w0 = np.ascontiguousarray(w0, dtype=np.float32)
+        self.b0 = np.ascontiguousarray(b0, dtype=np.float32)
+        self.w1 = np.ascontiguousarray(w1, dtype=np.float32)
+        self.b1 = np.ascontiguousarray(b1, dtype=np.float32)
+        self.w2 = np.ascontiguousarray(w2, dtype=np.float32)
+        self.b2 = np.ascontiguousarray(b2, dtype=np.float32)
+        self.w3 = np.ascontiguousarray(w3, dtype=np.float32)
+        self.b3 = np.ascontiguousarray(b3, dtype=np.float32)
+
+        self.moves = []
+
+    def _get_piece_int(self, piece_type):
+        return self.PIECE_TYPE_TO_INT[piece_type]
+        
+    def _get_color_int(self, color):
+        return self.COLOR_TO_INT[color]
 
     def __call__(self):
         if not self.score_builded:
             self.build()
-        return self._model_call()[0]
+        return self._model_call()
 
     def _model_call(self):
-        # The network expects the side-to-move's perspective first.
-        # If it's Black's turn, we must swap the White and Black halves.
-        if self.board.turn == bc.WHITE:
-            x = self.accumulator
-        else:
-            # Concatenate Black's half followed by White's half
-            x = np.concatenate([
-                self.accumulator[self._black_slice],
-                self.accumulator[self._white_slice]
-            ])
-            
-        for i in range(len(self.weights) - 1):
-            x = np.maximum(x @ self.weights[i] + self.biases[i], 0)
-        x = x @ self.weights[-1] + self.biases[-1]
-        return x
-
-    def mirror_sq(self, square: int) -> int:
-        return square ^ 56
-
-    def orient(self, square: int, perspective_is_white: bool) -> int:
-        return square if perspective_is_white else self.mirror_sq(square)
-
-
-    def _feature_index(self, perspective_is_white, king_sq, piece_type, piece_color, square_idx):
-        k = self.orient(king_sq, perspective_is_white)
-        relative = 0 if (piece_color == bc.WHITE) == perspective_is_white else 1
-        p_idx = relative * 5 + self.PIECE_TYPE_TO_IDX[piece_type]
-        sq = self.orient(square_idx, perspective_is_white)
-        return k * 640 + p_idx * 64 + sq
-
-    def _add(self, perspective_is_white, king_sq, piece_type, piece_color, square_idx):
-        idx = self._feature_index(perspective_is_white, king_sq, piece_type, piece_color, square_idx)
-        sl = self._white_slice if perspective_is_white else self._black_slice
-        self.accumulator[sl] += self.embedding[idx]
-
-    def _remove(self, perspective_is_white, king_sq, piece_type, piece_color, square_idx):
-        idx = self._feature_index(perspective_is_white, king_sq, piece_type, piece_color, square_idx)
-        sl = self._white_slice if perspective_is_white else self._black_slice
-        self.accumulator[sl] -= self.embedding[idx]
+        raw_output = float(_numba_forward(
+            self.accumulator, self.half_dim, self.board.turn == bc.WHITE,
+            self.w0, self.b0, self.w1, self.b1, self.w2, self.b2, self.w3, self.b3
+        ))
+        
+        # Convert Tanh (-1..1) to Centipawns (-Inf..Inf)
+        raw_output = max(-1.0 + 1e-6, min(1.0 - 1e-6, raw_output))
+        return int(np.arctanh(raw_output) * 400.0)
 
     def _build_half(self, perspective_is_white, king_sq):
-        """Recompute one perspective's half from scratch by scanning the board.
-        Needed on the initial build(), and afterwards only for whichever half's
-        own king just moved — that half's anchor square changed, so every one
-        of its feature indices is stale and there's nothing worth patching."""
-        k = self.orient(king_sq, perspective_is_white)
+        k = king_sq if perspective_is_white else king_sq ^ 56
         indices = []
+        
         for color in (bc.WHITE, bc.BLACK):
-            relative = 0 if (color == bc.WHITE) == perspective_is_white else 1
-            for piece_type, p in self.PIECE_TYPE_TO_IDX.items():
-                p_idx = relative * 5 + p
-                for square in self.board[color, piece_type]:  # C-backed bitboard iteration
-                    sq = self.orient(square.index(), perspective_is_white)
-                    indices.append(k * 640 + p_idx * 64 + sq)
-        half = (self.embedding[indices].sum(axis=0) if indices
-                else np.zeros(self.half_dim, dtype=self.embedding.dtype))
-        sl = self._white_slice if perspective_is_white else self._black_slice
-        self.accumulator[sl] = half
+            is_own = (color == bc.WHITE) if perspective_is_white else (color == bc.BLACK)
+            rel_offset = 0 if is_own else 5
+            for piece_type, p in self.PIECE_TYPE_TO_INT.items():
+                if piece_type == bc.KING: continue
+                p_idx = rel_offset + p
+                base = k * 640 + p_idx * 64
+                for square in self.board[color, piece_type]:
+                    sq = square.index()
+                    sq = sq if perspective_is_white else sq ^ 56
+                    indices.append(base + sq)
+                    
+        half_start = 0 if perspective_is_white else self.half_dim
+        half_end = self.half_dim if perspective_is_white else 2 * self.half_dim
+        
+        if indices:
+            idx_arr = np.array(indices, dtype=np.intp)
+            np.add.reduce(self.embedding[idx_arr], axis=0, out=self.accumulator[half_start:half_end])
+        else:
+            self.accumulator[half_start:half_end].fill(0)
 
     def build(self):
         self.king_sq_white = next(iter(self.board[bc.WHITE, bc.KING])).index()
         self.king_sq_black = next(iter(self.board[bc.BLACK, bc.KING])).index()
-        self.accumulator = np.zeros(2 * self.half_dim, dtype=self.embedding.dtype)
+        self.accumulator.fill(0)
         self._build_half(True, self.king_sq_white)
         self._build_half(False, self.king_sq_black)
         self.score_builded = True
-
-    # ---- do / undo ----------------------------------------------------------
 
     @override
     def do(self, move: bc.Move):
@@ -378,92 +451,176 @@ class NNEvaluation(Evaluation):
         origin_idx = move.origin.index()
         dest_idx = move.destination.index()
         moving_piece = self.board[move.origin]
-        assert moving_piece is not None, "do() called with an empty origin square"
-        moving_type = moving_piece.piece_type
-        moving_color = moving_piece.color
-        king_moved = moving_type == bc.KING
+        
+        moving_type_int = self._get_piece_int(moving_piece.piece_type)
+        moving_color_int = self._get_color_int(moving_piece.color)
+        king_moved = (moving_type_int == 5)
 
-        captured_piece = None
-        captured_sq_idx = None
-        if move.is_capture(self.board):
-            dest_content = self.board[move.destination]
-            if dest_content is None:
-                captured_sq_idx = (origin_idx // 8) * 8 + (dest_idx % 8)
-                captured_piece = self.board[bc.SQUARES[captured_sq_idx]]
-            else:
-                captured_sq_idx = dest_idx
-                captured_piece = dest_content
+        is_capture = False
+        captured_type_int = -1
+        captured_color_int = -1
+        captured_sq_idx = -1
 
-        castle_rook_squares = None
+        dest_content = self.board[move.destination]
+        if dest_content is not None:
+            is_capture = True
+            captured_type_int = self._get_piece_int(dest_content.piece_type)
+            captured_color_int = self._get_color_int(dest_content.color)
+            captured_sq_idx = dest_idx
+        elif moving_type_int == 0 and (dest_idx % 8) != (origin_idx % 8):
+            is_capture = True
+            captured_sq_idx = (origin_idx // 8) * 8 + (dest_idx % 8)
+            captured_piece = self.board[bc.SQUARES[captured_sq_idx]]
+            captured_type_int = self._get_piece_int(captured_piece.piece_type)
+            captured_color_int = self._get_color_int(captured_piece.color)
+
+        is_castle = False
+        r_from = -1
+        r_to = -1
         if king_moved:
-            ctype = move.castling_type(self.board)
-            if ctype is not None:
-                castle_rook_squares = self._castle_rook_squares[ctype]
+            file_diff = (dest_idx % 8) - (origin_idx % 8)
+            if file_diff == 2:
+                is_castle = True
+                r_from = dest_idx + 1
+                r_to = dest_idx - 1
+            elif file_diff == -2:
+                is_castle = True
+                r_from = dest_idx - 2
+                r_to = dest_idx + 1
 
         self.moves.append((self.accumulator.copy(), self.king_sq_white, self.king_sq_black))
 
         promo = move.promotion
-        dest_type = promo if promo is not None else moving_type
-        own_half_is_white = (moving_color == bc.WHITE) if king_moved else None
+        dest_type_int = self._get_piece_int(promo) if promo is not None else moving_type_int
 
-        for persp_is_white, king_sq in ((True, self.king_sq_white), (False, self.king_sq_black)):
-            if king_moved and persp_is_white == own_half_is_white:
-                # This half's own king just moved -- fully rebuilt below instead.
-                continue
-
-            if captured_piece is not None:
-                self._remove(persp_is_white, king_sq, captured_piece.piece_type,
-                              captured_piece.color, captured_sq_idx)
-
-            if not king_moved:
-                self._remove(persp_is_white, king_sq, moving_type, moving_color, origin_idx)
-                self._add(persp_is_white, king_sq, dest_type, moving_color, dest_idx)
-
-            if castle_rook_squares is not None:
-                r_from, r_to = castle_rook_squares
-                self._remove(persp_is_white, king_sq, bc.ROOK, moving_color, r_from)
-                self._add(persp_is_white, king_sq, bc.ROOK, moving_color, r_to)
+        self.king_sq_white, self.king_sq_black = _numba_do(
+            self.accumulator, self.embedding, self.king_sq_white, self.king_sq_black,
+            origin_idx, dest_idx, moving_type_int, moving_color_int, dest_type_int,
+            is_capture, captured_type_int, captured_color_int, captured_sq_idx,
+            is_castle, r_from, r_to, king_moved, self.PIECE_TYPE_TO_IDX_NP
+        )
 
         if king_moved:
             self.board.apply(move)
-            self._build_half(own_half_is_white, dest_idx)
+            self._build_half(moving_color_int == 0, dest_idx)
             self.board.undo()
-            if own_half_is_white:
-                self.king_sq_white = dest_idx
-            else:
-                self.king_sq_black = dest_idx
 
     @override
     def undo(self):
         if not self.moves:
             raise IndexError("nothing to undo")
-        self.accumulator, self.king_sq_white, self.king_sq_black = self.moves.pop()
+        acc, self.king_sq_white, self.king_sq_black = self.moves.pop()
+        self.accumulator[:] = acc
+
+        
+def run_validation_test():
+    print("Starting rigorous validation test...")
     
-
-
-if __name__ == "__main__":
+    # Initial setup
     board = bc.Board()
     inc = NNEvaluation(board)
     full = NNEvaluation(board)
-    for i, move in enumerate(board.legal_moves()):
     
-        before = inc()
+    # Warm up Numba JIT compiler to avoid timing/compilation errors during the test
+    print("Warming up Numba JIT...")
+    _ = inc()
+    _ = full()
     
+    move_history = []
+    
+    for i in range(10000):
+        legal_moves = board.legal_moves()
+        if not legal_moves:
+            print(f"Game ended at move {i}. Resetting board.")
+            board = bc.Board()
+            inc = NNEvaluation(board)
+            full = NNEvaluation(board)
+            move_history = []
+            continue
+            
+        move = random.choice(legal_moves)
+        uci_move = str(move)
+        move_history.append(uci_move)
+        
+        # Extract move info BEFORE applying to the board
+        moving_piece = board[move.origin]
+        is_cap = move.is_capture(board)
+        moving_type = moving_piece.piece_type if moving_piece else None
+        moving_color = moving_piece.color if moving_piece else None
+        
+        # --- 1. PRE-MOVE VERIFICATION ---
+        full.board = board.copy()
+        full.score_builded = False
+        full.build()
+        
+        if not np.allclose(inc.accumulator, full.accumulator, atol=1e-5):
+            print("\n!!! PRE-MOVE MISMATCH DETECTED !!!")
+            print("(This usually means the previous undo() was broken)")
+            print(f"Move {i+1}: {uci_move}")
+            print("Move History:", " ".join(move_history))
+            print("FEN:", board.fen())
+            diff = inc.accumulator - full.accumulator
+            idx = np.argmax(np.abs(diff))
+            print(f"Max Diff: {diff[idx]} at index {idx}")
+            if idx < inc.half_dim:
+                print("Bug is in WHITE perspective half.")
+            else:
+                print("Bug is in BLACK perspective half.")
+            return
+
+        # Save state before do() to test undo later
+        prev_acc = inc.accumulator.copy()
+        
+        # --- APPLY MOVE ---
         inc.do(move)
         board.apply(move)
-    
-        full.build()          # rebuild from scratch
-    
-        if not np.allclose(inc.accumulator, full.accumulator):
-            print(i)
+        
+        # --- 2. POST-MOVE VERIFICATION ---
+        full.board = board.copy()
+        full.score_builded = False
+        full.build()
+        
+        if not np.allclose(inc.accumulator, full.accumulator, atol=1e-7):
+            print("\n!!! BUG DETECTED IN do() !!!")
+            print(f"Move {i+1}: {uci_move}")
+            print("Move History:", " ".join(move_history))
+            print("FEN BEFORE move:", board.fen()) # Board is already applied here, so this is the post-move FEN
+            print(f"Moving Piece: {moving_color} {moving_type}")
+            print(f"Is Capture: {is_cap}")
+            print(f"Promotion: {move.promotion}")
+            
             diff = inc.accumulator - full.accumulator
-            print(np.max(np.abs(inc.accumulator - full.accumulator)))
             idx = np.argmax(np.abs(diff))
-            print(idx, diff[idx])
-            print(move)
-        assert np.max(np.abs(inc.accumulator - full.accumulator)) < 1e-6
-    
+            print(f"\nMax Difference: {diff[idx]}")
+            print(f"Index of Max Diff: {idx}")
+            
+            if idx < inc.half_dim:
+                print("Bug is in WHITE perspective half!")
+            else:
+                print("Bug is in BLACK perspective half!")
+            return
+            
+        # --- 3. UNDO VERIFICATION ---
         board.undo()
         inc.undo()
-    
-        assert abs(inc() - before) < 1e-6
+        
+        if not np.allclose(inc.accumulator, prev_acc, atol=1e-5):
+            print("\n!!! BUG DETECTED IN undo() !!!")
+            print(f"Move {i+1}: {uci_move}")
+            print("Move History:", " ".join(move_history))
+            print(f"Moving Piece: {moving_color} {moving_type}")
+            print(f"Is Capture: {is_cap}")
+            diff = inc.accumulator - prev_acc
+            idx = np.argmax(np.abs(diff))
+            print(f"Max Diff: {diff[idx]} at index {idx}")
+            if idx < inc.half_dim:
+                print("Bug is in WHITE perspective half.")
+            else:
+                print("Bug is in BLACK perspective half.")
+            return
+        print(f"Move {i+1}: {uci_move}")
+
+    print("\nTest passed successfully for 10000 moves!")
+
+if __name__ == "__main__":
+    run_validation_test()

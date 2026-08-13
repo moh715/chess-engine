@@ -249,7 +249,7 @@ def board_result_text():
         return "Draw — stalemate"
     if board in bc.INSUFFICIENT_MATERIAL:
         return "Draw — insufficient material"
-    if board in bc.FIFTY_MOVE_RULE:
+    if board in bc.FIFTY_MOVE_TIMEOUT:
         return "Draw — fifty move rule"
     if board in bc.THREEFOLD_REPETITION:
         return "Draw — threefold repetition"
