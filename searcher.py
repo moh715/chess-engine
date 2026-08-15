@@ -49,9 +49,6 @@ class Searcher():
         print("TT hit rate:", round(100 * (self.tt_hits / self.tt_lookups), 2), "%")
         print("lookups/cache time", self.time_tt)
         print("aspr_fails: ", self.aspr_fail)
-        print("sort time: ", self.time_sort)
-        print("evaluation time: ", self.time_eval)
-        print("quiesce time: ", self.time_quiesce)
 
 
     def search(self, max_depth: int):
@@ -61,26 +58,32 @@ class Searcher():
         best_score = 0
         alpha = -META
         beta  = META
-
         for depth in range(1, max_depth + 1):
             if depth == 1:
                 best_score, best_move = self._get_best_move(depth, alpha, beta)
             else:
                 margin = self.WINDOW_MARGIN
                 while True:
-                    alpha = best_score - margin
-                    beta  = best_score + margin
+                    # Clamp alpha/beta to META so we don't search outside the valid score range
+                    alpha = max(-META, best_score - margin)
+                    beta  = min(META, best_score + margin)
 
                     score, move = self._get_best_move(depth, alpha, beta)
 
                     if score <= alpha or score >= beta:
                         self.aspr_fail += 1
                         margin *= 2
+                        
+                        
+                        if alpha <= -META and beta >= META:
+                            best_score = score
+                            best_move  = move
+                            break
                     else:
                         best_score = score
                         best_move  = move
                         break
-
+    
         return best_score, best_move
 
     def _get_best_move(self, depth: int, alpha: int, beta: int) -> tuple[float, bc.Move]:
@@ -88,7 +91,6 @@ class Searcher():
         best_score = float("-inf")
         best_move  = None
         moves = self._sorted_moves(list(self.board.legal_moves()), depth)
-
         for move in moves:
             self.evaluate.do(move)
             self.board.apply(move)
@@ -265,7 +267,25 @@ class Searcher():
         
         return best_value
 
+    def reset(self, board: bc.Board):
+        """Rebind this searcher to a new game/board, clearing all per-game state."""
+        self.board = board
+        self.evaluate.set_board(board)
+        self.seee = SEEEvaluator(board)
+        self.see = self.seee.see
+    
+        self.tt.clear()
+        self.qtt.clear()
+        self.killer = [[None, None] for _ in range(MAX_DEPTH)]
+        self.history = defaultdict(int)
+    
+        self.nodes = 0
+        self.tt_hits = 0
+        self.tt_lookups = 0
+        self.beta_cutof = 0
+        self.aspr_fail = 0
 
+        
     def _tt_lookup(self, key, depth, alpha, beta, is_minmax):
         self.tt_lookups += 1
         table = self.tt if is_minmax else self.qtt
@@ -296,7 +316,7 @@ class Searcher():
             flag = LOWERBOUND
         else:
             flag = EXACT
-
+        
         old = table.get(key)
         if old is None or depth >= old[2]:
             table[key] = (best_value, best_move, depth, flag)

@@ -41,9 +41,10 @@ class Evaluation(ABC):
     @abstractmethod
     def queen(self):
         ...
-
+        
+    @abstractmethod
     def set_board(self, board):
-        self.board = board
+        ...
         
     @abstractmethod
     def __call__(self):
@@ -69,6 +70,10 @@ class Handcrafted(Evaluation):
     @override
     def queen(self):
         return 900
+    @override
+    def set_board(self, board):
+        self.board = board
+        self.score_builded = False
     piece_values = {
         bc.PAWN: 100,
         bc.ROOK: 500,
@@ -251,6 +256,7 @@ def _numba_forward(acc, half_dim, is_white_turn, w0, b0, w1, b1, w2, b2, w3, b3)
     x = np.dot(x, w2) + b2
     x = np.maximum(x, 0)
     x = np.dot(x, w3) + b3
+    x = np.tanh(x)
     return x[0]
 
 @njit(cache=True)
@@ -268,28 +274,29 @@ def _numba_do(acc, emb, king_sq_w, king_sq_b, origin_idx, dest_idx,
             is_own = (captured_color == 0)
             p_idx = 0 if is_own else 5
             p_idx += piece_type_to_idx[captured_type]
-            idx = kw * 640 + p_idx * 64 + captured_sq
+            # ADDED + 1 TO MATCH KERAS MODEL SHIFT
+            idx = kw * 640 + p_idx * 64 + captured_sq + 1
             acc[:half_dim] -= emb[idx]
         
         if not king_moved:
             is_own = (moving_color == 0)
             p_idx = 0 if is_own else 5
             p_idx += piece_type_to_idx[moving_type]
-            idx = kw * 640 + p_idx * 64 + origin_idx
+            idx = kw * 640 + p_idx * 64 + origin_idx + 1
             acc[:half_dim] -= emb[idx]
             
             p_idx = 0 if is_own else 5
             p_idx += piece_type_to_idx[dest_type]
-            idx = kw * 640 + p_idx * 64 + dest_idx
+            idx = kw * 640 + p_idx * 64 + dest_idx + 1
             acc[:half_dim] += emb[idx]
             
-        elif is_castle:  # <--- THIS BLOCK WAS ACCIDENTALLY DELETED
+        elif is_castle:
             is_own = (moving_color == 0)
             p_idx = 0 if is_own else 5
             p_idx += piece_type_to_idx[3] # ROOK = 3
-            idx = kw * 640 + p_idx * 64 + r_from
+            idx = kw * 640 + p_idx * 64 + r_from + 1
             acc[:half_dim] -= emb[idx]
-            idx = kw * 640 + p_idx * 64 + r_to
+            idx = kw * 640 + p_idx * 64 + r_to + 1
             acc[:half_dim] += emb[idx]
 
     # --- Black Perspective ---
@@ -300,7 +307,7 @@ def _numba_do(acc, emb, king_sq_w, king_sq_b, origin_idx, dest_idx,
             is_own = (captured_color == 1)
             p_idx = 0 if is_own else 5
             p_idx += piece_type_to_idx[captured_type]
-            idx = kb_mir * 640 + p_idx * 64 + sq
+            idx = kb_mir * 640 + p_idx * 64 + sq + 1
             acc[half_dim:] -= emb[idx]
         
         if not king_moved:
@@ -308,22 +315,22 @@ def _numba_do(acc, emb, king_sq_w, king_sq_b, origin_idx, dest_idx,
             is_own = (moving_color == 1)
             p_idx = 0 if is_own else 5
             p_idx += piece_type_to_idx[moving_type]
-            idx = kb_mir * 640 + p_idx * 64 + sq
+            idx = kb_mir * 640 + p_idx * 64 + sq + 1
             acc[half_dim:] -= emb[idx]
             
             sq = dest_idx ^ 56
             p_idx = 0 if is_own else 5
             p_idx += piece_type_to_idx[dest_type]
-            idx = kb_mir * 640 + p_idx * 64 + sq
+            idx = kb_mir * 640 + p_idx * 64 + sq + 1
             acc[half_dim:] += emb[idx]
             
-        elif is_castle:  # <--- THIS BLOCK WAS ACCIDENTALLY DELETED
+        elif is_castle:
             is_own = (moving_color == 1)
             p_idx = 0 if is_own else 5
             p_idx += piece_type_to_idx[3] # ROOK = 3
-            idx = kb_mir * 640 + p_idx * 64 + (r_from ^ 56)
+            idx = kb_mir * 640 + p_idx * 64 + (r_from ^ 56) + 1
             acc[half_dim:] -= emb[idx]
-            idx = kb_mir * 640 + p_idx * 64 + (r_to ^ 56)
+            idx = kb_mir * 640 + p_idx * 64 + (r_to ^ 56) + 1
             acc[half_dim:] += emb[idx]
             
     if king_moved:
@@ -333,24 +340,34 @@ def _numba_do(acc, emb, king_sq_w, king_sq_b, origin_idx, dest_idx,
             return king_sq_w, dest_idx
     return king_sq_w, king_sq_b
 
-# --- MAIN CLASS ---
 class NNEvaluation(Evaluation):
     @property
     @override
     def scope_type(self):
-        return ScoreType.CENTIPAWNS  # Changed to Centipawns
-
+        return ScoreType.CENTIPAWNS
+    @override
+    def set_board(self, board):
+        self.board = board
+        self.score_builded = False
     @property
     @override
     def window_margin(self):
-        return 0.05
+        return 70
 
     @property
     @override
     def queen(self):
-        return 0.98
+        return 900
 
     MAX_PIECES = 32
+    PIECE_VALUES = {
+        bc.PAWN: 100,
+        bc.KNIGHT: 320,
+        bc.BISHOP: 330,
+        bc.ROOK: 500,
+        bc.QUEEN: 900,
+    }
+    PIECE_VALUES_INT = [100, 320, 330, 500, 900, 0]
 
     def __init__(self, board: bc.Board = None) -> None:
         self.board = board
@@ -362,6 +379,7 @@ class NNEvaluation(Evaluation):
         self.half_dim = self.embedding.shape[1]
         
         self.accumulator = np.zeros(2 * self.half_dim, dtype=np.float32)
+        self.material_score = 0  
         
         self.king_sq_white = None
         self.king_sq_black = None
@@ -405,10 +423,13 @@ class NNEvaluation(Evaluation):
             self.accumulator, self.half_dim, self.board.turn == bc.WHITE,
             self.w0, self.b0, self.w1, self.b1, self.w2, self.b2, self.w3, self.b3
         ))
-        
-        # Convert Tanh (-1..1) to Centipawns (-Inf..Inf)
-        raw_output = max(-1.0 + 1e-6, min(1.0 - 1e-6, raw_output))
-        return int(np.arctanh(raw_output) * 400.0)
+        raw_output = max(-1 + 1e-4, min(1 - 1e-4, raw_output))
+        nn_cp = np.arctanh(raw_output) * 400.0
+        if self.board.turn == bc.WHITE:
+            return nn_cp + 4 * self.material_score
+
+        else:
+            return nn_cp - 4 * self.material_score
 
     def _build_half(self, perspective_is_white, king_sq):
         k = king_sq if perspective_is_white else king_sq ^ 56
@@ -424,7 +445,8 @@ class NNEvaluation(Evaluation):
                 for square in self.board[color, piece_type]:
                     sq = square.index()
                     sq = sq if perspective_is_white else sq ^ 56
-                    indices.append(base + sq)
+                    # ADDED + 1 TO MATCH KERAS MODEL SHIFT
+                    indices.append(base + sq + 1)
                     
         half_start = 0 if perspective_is_white else self.half_dim
         half_end = self.half_dim if perspective_is_white else 2 * self.half_dim
@@ -441,6 +463,11 @@ class NNEvaluation(Evaluation):
         self.accumulator.fill(0)
         self._build_half(True, self.king_sq_white)
         self._build_half(False, self.king_sq_black)
+        self.material_score = 0
+        for piece_type, val in self.PIECE_VALUES.items():
+            self.material_score += len(self.board[bc.WHITE, piece_type]) * val
+            self.material_score -= len(self.board[bc.BLACK, piece_type]) * val
+            
         self.score_builded = True
 
     @override
@@ -488,10 +515,24 @@ class NNEvaluation(Evaluation):
                 r_from = dest_idx - 2
                 r_to = dest_idx + 1
 
-        self.moves.append((self.accumulator.copy(), self.king_sq_white, self.king_sq_black))
+        self.moves.append((self.accumulator.copy(), self.king_sq_white, self.king_sq_black, self.material_score))
 
         promo = move.promotion
         dest_type_int = self._get_piece_int(promo) if promo is not None else moving_type_int
+
+        if is_capture:
+            victim_val = self.PIECE_VALUES_INT[captured_type_int]
+            if captured_color_int == 0: 
+                self.material_score -= victim_val
+            else:
+                self.material_score += victim_val
+                
+        if promo is not None:
+            promo_val = self.PIECE_VALUES_INT[dest_type_int]
+            if moving_color_int == 0:   
+                self.material_score += promo_val - self.PIECE_VALUES_INT[0]
+            else:                        
+                self.material_score -= promo_val - self.PIECE_VALUES_INT[0]
 
         self.king_sq_white, self.king_sq_black = _numba_do(
             self.accumulator, self.embedding, self.king_sq_white, self.king_sq_black,
@@ -509,19 +550,18 @@ class NNEvaluation(Evaluation):
     def undo(self):
         if not self.moves:
             raise IndexError("nothing to undo")
-        acc, self.king_sq_white, self.king_sq_black = self.moves.pop()
-        self.accumulator[:] = acc
+        acc, self.king_sq_white, self.king_sq_black, self.material_score = self.moves.pop()
+        self.accumulator[:] = acc        
+
 
         
 def run_validation_test():
     print("Starting rigorous validation test...")
     
-    # Initial setup
     board = bc.Board()
     inc = NNEvaluation(board)
     full = NNEvaluation(board)
     
-    # Warm up Numba JIT compiler to avoid timing/compilation errors during the test
     print("Warming up Numba JIT...")
     _ = inc()
     _ = full()
