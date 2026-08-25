@@ -114,7 +114,7 @@ class Searcher():
         if self.board in bc.MATE:
             return self._terminal_score(ply)
         if self.board in bc.THREEFOLD_REPETITION:
-            return -1
+            return -10
         if depth == 0:
             v = self.quiesce(alpha, beta, ply)
             return v
@@ -380,6 +380,8 @@ class Searcher():
     def _terminal_score(self, ply: int) -> float:
         if self.board in bc.CHECKMATE:
             return -META + ply
+        if self.board in bc.THREEFOLD_REPETITION:
+            return -1
         return 0
 
 

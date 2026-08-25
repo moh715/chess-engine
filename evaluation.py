@@ -238,8 +238,10 @@ class Handcrafted(Evaluation):
             )
         return phase
 
+
+
 @njit(cache=True)
-def _numba_forward(acc, half_dim, is_white_turn, w0, b0, w1, b1, w2, b2, w3, b3):
+def _numba_forward(acc, half_dim, is_white_turn, weights, biases):
     if is_white_turn:
         x = np.empty(2 * half_dim, dtype=np.float32)
         x[:half_dim] = acc[:half_dim]
@@ -249,14 +251,19 @@ def _numba_forward(acc, half_dim, is_white_turn, w0, b0, w1, b1, w2, b2, w3, b3)
         x[:half_dim] = acc[half_dim:]
         x[half_dim:] = acc[:half_dim]
         
-    x = np.dot(x, w0) + b0
-    x = np.maximum(x, 0)
-    x = np.dot(x, w1) + b1
-    x = np.maximum(x, 0)
-    x = np.dot(x, w2) + b2
-    x = np.maximum(x, 0)
-    x = np.dot(x, w3) + b3
+    # Numba automatically unrolls this tuple loop at compile time!
+    # It will adapt to however many dense layers your model has.
+    num_layers = len(weights)
+    for i in range(num_layers - 1):
+        x = np.dot(x, weights[i]) + biases[i]
+        x = np.maximum(x, 0)
+        
+    # Final layer
+    x = np.dot(x, weights[-1]) + biases[-1]
     x = np.tanh(x)
+    
+    if np.isnan(x[0]):
+        return 0.0
     return x[0]
 
 @njit(cache=True)
@@ -267,14 +274,13 @@ def _numba_do(acc, emb, king_sq_w, king_sq_b, origin_idx, dest_idx,
     
     half_dim = emb.shape[1]
     
-    # --- White Perspective ---
+    # White Perspective
     if not (king_moved and moving_color == 0):
         kw = king_sq_w
         if is_capture:
             is_own = (captured_color == 0)
             p_idx = 0 if is_own else 5
             p_idx += piece_type_to_idx[captured_type]
-            # ADDED + 1 TO MATCH KERAS MODEL SHIFT
             idx = kw * 640 + p_idx * 64 + captured_sq + 1
             acc[:half_dim] -= emb[idx]
         
@@ -293,13 +299,13 @@ def _numba_do(acc, emb, king_sq_w, king_sq_b, origin_idx, dest_idx,
         elif is_castle:
             is_own = (moving_color == 0)
             p_idx = 0 if is_own else 5
-            p_idx += piece_type_to_idx[3] # ROOK = 3
+            p_idx += piece_type_to_idx[3]
             idx = kw * 640 + p_idx * 64 + r_from + 1
             acc[:half_dim] -= emb[idx]
             idx = kw * 640 + p_idx * 64 + r_to + 1
             acc[:half_dim] += emb[idx]
 
-    # --- Black Perspective ---
+    # Black Perspective
     if not (king_moved and moving_color == 1):
         kb_mir = king_sq_b ^ 56
         if is_capture:
@@ -327,7 +333,7 @@ def _numba_do(acc, emb, king_sq_w, king_sq_b, origin_idx, dest_idx,
         elif is_castle:
             is_own = (moving_color == 1)
             p_idx = 0 if is_own else 5
-            p_idx += piece_type_to_idx[3] # ROOK = 3
+            p_idx += piece_type_to_idx[3]
             idx = kb_mir * 640 + p_idx * 64 + (r_from ^ 56) + 1
             acc[half_dim:] -= emb[idx]
             idx = kb_mir * 640 + p_idx * 64 + (r_to ^ 56) + 1
@@ -345,10 +351,7 @@ class NNEvaluation(Evaluation):
     @override
     def scope_type(self):
         return ScoreType.CENTIPAWNS
-    @override
-    def set_board(self, board):
-        self.board = board
-        self.score_builded = False
+
     @property
     @override
     def window_margin(self):
@@ -359,27 +362,53 @@ class NNEvaluation(Evaluation):
     def queen(self):
         return 900
 
-    MAX_PIECES = 32
-    PIECE_VALUES = {
-        bc.PAWN: 100,
-        bc.KNIGHT: 320,
-        bc.BISHOP: 330,
-        bc.ROOK: 500,
-        bc.QUEEN: 900,
-    }
-    PIECE_VALUES_INT = [100, 320, 330, 500, 900, 0]
-
-    def __init__(self, board: bc.Board = None) -> None:
+    @override
+    def set_board(self, board):
         self.board = board
+        self.score_builded = False
+        piece_values = {
+            bc.PAWN: 100,
+            bc.ROOK: 500,
+            bc.KNIGHT: 320,
+            bc.BISHOP: 330,
+            bc.QUEEN: 900,
+            bc.KING: 2000,
+        }
+        self.MAX_PIECES = 32
+        self.PIECE_VALUES = piece_values
+        self.PIECE_VALUES_INT = [100, 320, 330, 500, 900, 0]
+
+    # Added model_path parameter
+    def __init__(self, board: bc.Board = None, model_path: str = "chess1.keras") -> None:
+        self.board = board
+        keras_model = load_model(model_path)
         
-        keras_model = load_model("chess.keras")
-        self.embedding = np.ascontiguousarray(keras_model.get_layer("embedding").get_weights()[0], dtype=np.float32)
+        # --- Dynamic Layer Extraction ---
+        self.embedding = None
+        self.weights = []
+        self.biases = []
+        
+        for layer in keras_model.layers:
+            if layer.name == "embedding":
+                self.embedding = np.ascontiguousarray(layer.get_weights()[0], dtype=np.float32)
+            elif layer.name.startswith("dense"):
+                w, b = layer.get_weights()
+                self.weights.append(np.ascontiguousarray(w, dtype=np.float32))
+                self.biases.append(np.ascontiguousarray(b, dtype=np.float32))
+                
+        if self.embedding is None:
+            raise ValueError("Model does not contain an 'embedding' layer.")
+        if not self.weights:
+            raise ValueError("Model does not contain any 'dense' layers.")
+            
+        # Convert to tuples so Numba can compile them efficiently
+        self.weights = tuple(self.weights)
+        self.biases = tuple(self.biases)
 
         self.score_builded = False
         self.half_dim = self.embedding.shape[1]
-        
         self.accumulator = np.zeros(2 * self.half_dim, dtype=np.float32)
-        self.material_score = 0  
+        self.material_score = 0
         
         self.king_sq_white = None
         self.king_sq_black = None
@@ -388,22 +417,7 @@ class NNEvaluation(Evaluation):
             bc.PAWN: 0, bc.KNIGHT: 1, bc.BISHOP: 2, bc.ROOK: 3, bc.QUEEN: 4, bc.KING: 5
         }
         self.COLOR_TO_INT = {bc.WHITE: 0, bc.BLACK: 1}
-        
         self.PIECE_TYPE_TO_IDX_NP = np.array([0, 1, 2, 3, 4, 0], dtype=np.int32)
-
-        w0, b0 = keras_model.get_layer("dense").get_weights()
-        w1, b1 = keras_model.get_layer("dense_1").get_weights()
-        w2, b2 = keras_model.get_layer("dense_2").get_weights()
-        w3, b3 = keras_model.get_layer("dense_3").get_weights()
-        
-        self.w0 = np.ascontiguousarray(w0, dtype=np.float32)
-        self.b0 = np.ascontiguousarray(b0, dtype=np.float32)
-        self.w1 = np.ascontiguousarray(w1, dtype=np.float32)
-        self.b1 = np.ascontiguousarray(b1, dtype=np.float32)
-        self.w2 = np.ascontiguousarray(w2, dtype=np.float32)
-        self.b2 = np.ascontiguousarray(b2, dtype=np.float32)
-        self.w3 = np.ascontiguousarray(w3, dtype=np.float32)
-        self.b3 = np.ascontiguousarray(b3, dtype=np.float32)
 
         self.moves = []
 
@@ -421,20 +435,21 @@ class NNEvaluation(Evaluation):
     def _model_call(self):
         raw_output = float(_numba_forward(
             self.accumulator, self.half_dim, self.board.turn == bc.WHITE,
-            self.w0, self.b0, self.w1, self.b1, self.w2, self.b2, self.w3, self.b3
+            self.weights, self.biases
         ))
-        raw_output = max(-1 + 1e-4, min(1 - 1e-4, raw_output))
-        nn_cp = np.arctanh(raw_output) * 400.0
+        
+        raw_output = max(-1.0 + 1e-6, min(1.0 - 1e-6, raw_output))
+        nn_cp = int(np.arctanh(raw_output) * 400.0)
+        nn_cp = np.nan_to_num(nn_cp, nan=0)
+        
         if self.board.turn == bc.WHITE:
-            return nn_cp + 4 * self.material_score
-
+            return int(nn_cp + self.material_score)
         else:
-            return nn_cp - 4 * self.material_score
+            return int(nn_cp - self.material_score)
 
     def _build_half(self, perspective_is_white, king_sq):
         k = king_sq if perspective_is_white else king_sq ^ 56
         indices = []
-        
         for color in (bc.WHITE, bc.BLACK):
             is_own = (color == bc.WHITE) if perspective_is_white else (color == bc.BLACK)
             rel_offset = 0 if is_own else 5
@@ -445,7 +460,6 @@ class NNEvaluation(Evaluation):
                 for square in self.board[color, piece_type]:
                     sq = square.index()
                     sq = sq if perspective_is_white else sq ^ 56
-                    # ADDED + 1 TO MATCH KERAS MODEL SHIFT
                     indices.append(base + sq + 1)
                     
         half_start = 0 if perspective_is_white else self.half_dim
@@ -463,10 +477,11 @@ class NNEvaluation(Evaluation):
         self.accumulator.fill(0)
         self._build_half(True, self.king_sq_white)
         self._build_half(False, self.king_sq_black)
+        
         self.material_score = 0
         for piece_type, val in self.PIECE_VALUES.items():
-            self.material_score += len(self.board[bc.WHITE, piece_type]) * val
-            self.material_score -= len(self.board[bc.BLACK, piece_type]) * val
+            self.material_score += len(list(self.board[bc.WHITE, piece_type])) * val
+            self.material_score -= len(list(self.board[bc.BLACK, piece_type])) * val
             
         self.score_builded = True
 
@@ -520,19 +535,19 @@ class NNEvaluation(Evaluation):
         promo = move.promotion
         dest_type_int = self._get_piece_int(promo) if promo is not None else moving_type_int
 
-        if is_capture:
+        if is_capture and 0 <= captured_type_int < len(self.PIECE_VALUES_INT):
             victim_val = self.PIECE_VALUES_INT[captured_type_int]
-            if captured_color_int == 0: 
+            if captured_color_int == 0:
                 self.material_score -= victim_val
             else:
                 self.material_score += victim_val
                 
-        if promo is not None:
+        if promo is not None and 0 <= dest_type_int < len(self.PIECE_VALUES_INT):
             promo_val = self.PIECE_VALUES_INT[dest_type_int]
-            if moving_color_int == 0:   
-                self.material_score += promo_val - self.PIECE_VALUES_INT[0]
-            else:                        
-                self.material_score -= promo_val - self.PIECE_VALUES_INT[0]
+            if moving_color_int == 0:
+                self.material_score += promo_val - 100
+            else:
+                self.material_score -= promo_val - 100
 
         self.king_sq_white, self.king_sq_black = _numba_do(
             self.accumulator, self.embedding, self.king_sq_white, self.king_sq_black,
@@ -542,18 +557,18 @@ class NNEvaluation(Evaluation):
         )
 
         if king_moved:
-            self.board.apply(move)
-            self._build_half(moving_color_int == 0, dest_idx)
-            self.board.undo()
+            try:
+                self.board.apply(move)
+                self._build_half(moving_color_int == 0, dest_idx)
+            finally:
+                self.board.undo()
 
     @override
     def undo(self):
         if not self.moves:
             raise IndexError("nothing to undo")
         acc, self.king_sq_white, self.king_sq_black, self.material_score = self.moves.pop()
-        self.accumulator[:] = acc        
-
-
+        self.accumulator[:] = acc
         
 def run_validation_test():
     print("Starting rigorous validation test...")

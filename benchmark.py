@@ -162,8 +162,8 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
     # Create the two searchers ONCE, tied to eval_fns[0] and eval_fns[1]
     # respectively. We'll rebind their board each game rather than
     # constructing new Searcher objects.
-    searcher1 = Searcher(test_pos[0], eval_fns[0]())
-    searcher2 = Searcher(test_pos[0], eval_fns[1]())
+    searcher1 = Searcher(test_pos[0], eval_fns[0])
+    searcher2 = Searcher(test_pos[0], eval_fns[1])
 
     for game_num in range(games):
         board = test_pos[game_num]
@@ -245,4 +245,4 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
             "%"
         )
 # single_move_benchmark(7, Handcrafted)
-eval_vs_eval2(4, 200, [NNEvaluation, Handcrafted])
+eval_vs_eval2(4, 500, [NNEvaluation(), NNEvaluation(model_path="best_chesseval.keras")])
