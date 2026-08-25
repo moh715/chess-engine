@@ -9,6 +9,7 @@ dependencies = [
     "numba>=0.66.0",
     "numpy>=2.4.0",
     "pygame>=2.6.1",
+    "pyperclip>=1.11.0",
     "scipy>=1.18.0",
     "tensorflow>=2.21.0",
 ]
