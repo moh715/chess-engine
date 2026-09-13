@@ -245,4 +245,4 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
             "%"
         )
 # single_move_benchmark(7, Handcrafted)
-eval_vs_eval2(4, 500, [NNEvaluation(), NNEvaluation(model_path="best_chesseval.keras")])
+eval_vs_eval2(5, 500, [NNEvaluation(), Handcrafted()])
