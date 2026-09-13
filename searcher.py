@@ -1,9 +1,10 @@
+import heapq
 from collections import defaultdict
 from time import perf_counter
-import heapq
-from evaluation import Handcrafted
+
 import bulletchess as bc
-from evaluation import Handcrafted, NNEvaluation
+
+from evaluation import Evaluation, Handcrafted, NNEvaluation
 from seee import SEEEvaluator
 
 META = 1e7
@@ -11,12 +12,14 @@ EXACT = 0
 LOWERBOUND = 1
 UPPERBOUND = 2
 MAX_DEPTH = 20
+TIME_CHECK_INTERVAL = 2048  # calls to _out_of_time between clock reads
 
 
-class Searcher():
-    def __init__(self, board: bc.Board, evaluation):
+class Searcher:
+    def __init__(self, board: bc.Board, evaluation: Evaluation):
         self.board = board
-        self.evaluate = evaluation(board)
+        self.evaluate = evaluation
+        self.evaluate.set_board(board)
         self.seee = SEEEvaluator(board)
         self.see = self.seee.see
         self.tt = {}
@@ -24,20 +27,45 @@ class Searcher():
         self.killer = [[None, None] for _ in range(MAX_DEPTH)]
         self.history = defaultdict(int)
         self.WINDOW_MARGIN = self.evaluate.window_margin
-        self.pieces_values ={
-                    bc.PAWN: 100, bc.KNIGHT: 320, bc.BISHOP: 300,
-                    bc.ROOK: 500, bc.QUEEN: 900, bc.KING: 100,
-                }
+        self.pieces_values = {
+            bc.PAWN: 100,
+            bc.KNIGHT: 320,
+            bc.BISHOP: 300,
+            bc.ROOK: 500,
+            bc.QUEEN: 900,
+            bc.KING: 100,
+        }
         self.nodes = 0
         self.tt_hits = 0
         self.tt_lookups = 0
         self.beta_cutof = 0
         self.aspr_fail = 0
-        self.time_sort    = 0.0
-        self.time_eval    = 0.0
-        self.time_quiesce = 0.0
-        self.time_tt      = 0.0
-        
+        self.last_depth = 0
+
+        # --- time management ---
+        self.time_limit = None  # seconds; None = unlimited
+        self.start_time = 0.0
+        self.stop = False
+        self._tick = 0
+
+    def _out_of_time(self) -> bool:
+        # --- time management: flag-based abort, clock read every ~2048 calls ---
+        if self.stop:
+            return True
+        if self.time_limit is None:
+            return False
+        self._tick += 1
+        if self._tick >= TIME_CHECK_INTERVAL:
+            self._tick = 0
+            if perf_counter() - self.start_time >= self.time_limit:
+                self.stop = True
+        return self.stop
+
+    @staticmethod
+    def time_for_move(remaining: float, increment: float = 0.0) -> float:
+        """Convert a game clock (seconds) into a per-move budget (seconds)."""
+        budget = remaining / 30 + 0.5 * increment
+        return max(0.05, min(budget, remaining * 0.2))
 
     def print_profile(self):
         """Print a tidy summary of where time was spent."""
@@ -46,57 +74,108 @@ class Searcher():
         print("tt_lookups: ", self.tt_lookups)
         print("tt_hits: ", self.tt_hits)
         print("TT hit rate:", round(100 * (self.tt_hits / self.tt_lookups), 2), "%")
-        print("lookups/cache time", self.time_tt)
         print("aspr_fails: ", self.aspr_fail)
-        print("sort time: ", self.time_sort)
-        print("evaluation time: ", self.time_eval)
-        print("quiesce time: ", self.time_quiesce)
+        print(
+            "elapsed: ", round(perf_counter() - self.start_time, 2), "s"
+        )  # --- time management ---
 
+    def stats(self) -> dict:
+        """One-shot snapshot of search statistics (cold path only)."""
+        return {
+            "nodes": self.nodes,
+            "tt_lookups": self.tt_lookups,
+            "tt_hits": self.tt_hits,
+            "tt_hit_rate": self.tt_hits / self.tt_lookups if self.tt_lookups else 0.0,
+            "beta_cutoffs": self.beta_cutof,
+            "aspiration_fails": self.aspr_fail,
+            "last_depth": self.last_depth,
+        }
 
-    def search(self, max_depth: int):
+    def search(self, max_depth: int = MAX_DEPTH, time_limit=None):
         """Iterative deepening — returns (best_score, best_move)."""
         assert max_depth >= 1
-        best_move = None
+        # --- time management: arm the clock ---
+        self.time_limit = time_limit
+        self.start_time = perf_counter()
+        self.stop = False
+        self._tick = 0
+
+        legal = list(self.board.legal_moves())
+        if not legal:
+            return 0, None
+        # Safety net: if we run out of time before depth 1 completes,
+        # still return a legal move.
+        best_move = legal[0]
         best_score = 0
-        alpha = -META
-        beta  = META
 
         for depth in range(1, max_depth + 1):
+            # --- time management: don't START an iteration we probably can't
+            # finish (the next iteration costs ~2-4x everything before it) ---
+            if (
+                depth > 1
+                and time_limit is not None
+                and perf_counter() - self.start_time > 0.4 * time_limit
+            ):
+                break
+
             if depth == 1:
-                best_score, best_move = self._get_best_move(depth, alpha, beta)
+                # --- time management: use temporaries so an aborted search
+                # never clobbers the previous best ---
+                score, move = self._get_best_move(depth, -META, META)
+                if self.stop:
+                    break
+                best_score, best_move = score, move
             else:
                 margin = self.WINDOW_MARGIN
                 while True:
-                    alpha = best_score - margin
-                    beta  = best_score + margin
+                    alpha = max(-META, best_score - margin)
+                    beta = min(META, best_score + margin)
 
                     score, move = self._get_best_move(depth, alpha, beta)
+
+                    if self.stop:  # aborted → discard, don't re-search
+                        break
 
                     if score <= alpha or score >= beta:
                         self.aspr_fail += 1
                         margin *= 2
+                        if alpha <= -META and beta >= META:
+                            best_score = score
+                            best_move = move
+                            break
                     else:
                         best_score = score
-                        best_move  = move
+                        best_move = move
                         break
+                if self.stop:
+                    break
+            self.last_depth = depth
 
         return best_score, best_move
 
-    def _get_best_move(self, depth: int, alpha: int, beta: int) -> tuple[float, bc.Move]:
+    def _get_best_move(
+        self, depth: int, alpha: int, beta: int
+    ) -> tuple[float, bc.Move]:
         """Root search: scores every legal move with negamax."""
         best_score = float("-inf")
-        best_move  = None
+        best_move = None
         moves = self._sorted_moves(list(self.board.legal_moves()), depth)
-
         for move in moves:
+            if self._out_of_time():  # --- time management ---
+                break
+
             self.evaluate.do(move)
             self.board.apply(move)
             score = -self.minmax(-beta, -alpha, depth - 1, ply=1)
             self.board.undo()
             self.evaluate.undo()
+
+            if self.stop:  # --- time management: score is garbage ---
+                break
+
             if score > best_score:
                 best_score = score
-                best_move  = move
+                best_move = move
                 alpha = max(alpha, score)
 
             if alpha >= beta:
@@ -104,21 +183,22 @@ class Searcher():
 
         return best_score, best_move
 
+    def minmax(
+        self, alpha: float, beta: float, depth: int, ply: int, allow_null: bool = True
+    ) -> float:
 
-    def minmax(self, alpha: float, beta: float, depth: int, ply: int,
-               allow_null: bool = True) -> float:
-
+        if self._out_of_time():  # --- time management ---
+            return 0
         if self.board in bc.MATE:
             return self._terminal_score(ply)
         if self.board in bc.THREEFOLD_REPETITION:
-            return -1
+            return -10
         if depth == 0:
             v = self.quiesce(alpha, beta, ply)
             return v
 
         key = hash(self.board)
         cached = self._tt_lookup(key, depth, alpha, beta, True)
-        
 
         if cached is not None:
             return cached
@@ -126,45 +206,55 @@ class Searcher():
         self.nodes += 1
         orig_alpha = alpha
 
-        if (allow_null
+        if (
+            allow_null
             and depth >= 3
             and not self.board in bc.CHECK
-            and self._has_pieces_left()):
+            and self._has_pieces_left()
+        ):
             R = 2 if depth <= 6 else 3
             self.board.apply(None)
-            score = -self.minmax(-beta, -beta + 1,
-                                 depth - 1 - R, ply + 1, False)
+            score = -self.minmax(-beta, -beta + 1, depth - 1 - R, ply + 1, False)
             self.board.undo()
+            if self.stop:  # --- time management ---
+                return 0
             if score >= beta:
                 return beta
 
         best_value = float("-inf")
-        best_move  = None
+        best_move = None
         entry = self.tt.get(key)
         best = entry[1] if entry else None
-        moves = [ (-self._move_tactical_score(m, best, ply), i,m) for i, m in enumerate(self.board.legal_moves())]
+        moves = [
+            (-self._move_tactical_score(m, best, ply), i, m)
+            for i, m in enumerate(self.board.legal_moves())
+        ]
         heapq.heapify(moves)
         number = 0
 
         while moves:
-            _,_, move = moves[0]
+            _, _, move = moves[0]
             reduction = self._get_reduction(move, number, depth)
             self.evaluate.do(move)
             self.board.apply(move)
             if number == 0:
                 value = -self.minmax(-beta, -alpha, depth - 1, ply + 1)
             else:
-                value = -self.minmax(-alpha - 1, -alpha,
-                                     depth - 1 - reduction, ply + 1)
-                if alpha < value < beta:
+                value = -self.minmax(-alpha - 1, -alpha, depth - 1 - reduction, ply + 1)
+                # --- time management: don't start a re-search if we're aborting ---
+                if alpha < value < beta and not self.stop:
                     value = -self.minmax(-beta, -alpha, depth - 1, ply + 1)
 
             self.board.undo()
             self.evaluate.undo()
+
+            if self.stop:  # --- time management: unwind, discard value ---
+                break
+
             number += 1
             if value > best_value:
                 best_value = value
-                best_move  = move
+                best_move = move
                 alpha = max(alpha, value)
 
             if best_value >= beta:
@@ -177,19 +267,19 @@ class Searcher():
                 break
             heapq.heappop(moves)
         self._cache(key, depth, best_value, best_move, orig_alpha, beta, True)
-        
 
         return best_value
 
-
     def quiesce(self, alpha: float, beta: float, ply: int) -> float:
+        if self._out_of_time():  # --- time management ---
+            return 0
         self.nodes += 1
         if self.board in bc.MATE:
             return self._terminal_score(ply)
 
         key = hash(self.board)
         cached = self._tt_lookup(key, 0, alpha, beta, False)
-        
+
         if cached is not None:
             return cached
 
@@ -230,12 +320,14 @@ class Searcher():
                 moves.append(move)
 
         entry = self.tt.get(key)
-        best  = entry[1] if entry else None
-        moves = [(-self._move_tactical_score(m, best, ply), i, m)
-                for i, m in enumerate(moves)]
+        best = entry[1] if entry else None
+        moves = [
+            (-self._move_tactical_score(m, best, ply), i, m)
+            for i, m in enumerate(moves)
+        ]
         heapq.heapify(moves)
 
-        best_move  = None
+        best_move = None
         first_move = True
         while moves:
             _, _, move = moves[0]
@@ -243,28 +335,54 @@ class Searcher():
             self.evaluate.do(move)
             self.board.apply(move)
             if first_move:
-                value      = -self.quiesce(-beta, -alpha, ply + 1)
+                value = -self.quiesce(-beta, -alpha, ply + 1)
                 first_move = False
             else:
                 value = -self.quiesce(-alpha - 1, -alpha, ply + 1)
-                if alpha < value < beta:
+                # --- time management: don't start a re-search if we're aborting ---
+                if alpha < value < beta and not self.stop:
                     value = -self.quiesce(-beta, -alpha, ply + 1)
             self.board.undo()
             self.evaluate.undo()
 
+            if self.stop:  # --- time management: unwind, discard value ---
+                break
+
             if value > best_value:
                 best_value = value
-                best_move  = move
-                alpha      = max(alpha, best_value)
+                best_move = move
+                alpha = max(alpha, best_value)
 
             if alpha >= beta:
                 self.beta_cutof += 1
                 break
             heapq.heappop(moves)
         self._cache(key, 0, best_value, best_move, orig_alpha, beta, False)
-        
+
         return best_value
 
+    def reset(self, board: bc.Board):
+        """Rebind this searcher to a new game/board, clearing all per-game state."""
+        self.board = board
+        self.evaluate.set_board(board)
+        self.seee = SEEEEvaluator(board)
+        self.see = self.seee.see
+
+        self.tt.clear()
+        self.qtt.clear()
+        self.killer = [[None, None] for _ in range(MAX_DEPTH)]
+        self.history = defaultdict(int)
+
+        self.nodes = 0
+        self.tt_hits = 0
+        self.tt_lookups = 0
+        self.beta_cutof = 0
+        self.aspr_fail = 0
+        self.last_depth = 0
+
+        # --- time management ---
+        self.time_limit = None
+        self.stop = False
 
     def _tt_lookup(self, key, depth, alpha, beta, is_minmax):
         self.tt_lookups += 1
@@ -288,6 +406,11 @@ class Searcher():
         return None
 
     def _cache(self, key, depth, best_value, best_move, alpha, beta, is_minmax):
+        # --- time management: NEVER persist results from an aborted search.
+        # The TT survives across moves; garbage here poisons the whole game. ---
+        if self.stop:
+            return
+
         table = self.tt if is_minmax else self.qtt
 
         if best_value <= alpha:
@@ -301,11 +424,10 @@ class Searcher():
         if old is None or depth >= old[2]:
             table[key] = (best_value, best_move, depth, flag)
 
-
     def _sorted_moves(self, moves, ply):
-        key   = hash(self.board)
+        key = hash(self.board)
         entry = self.tt.get(key)
-        best  = entry[1] if entry else None
+        best = entry[1] if entry else None
 
         return sorted(
             moves,
@@ -313,27 +435,31 @@ class Searcher():
             reverse=True,
         )
 
-    def _capture_score(self, move:bc.Move) -> int:
-        victim   = self.board[move.destination]
+    def _capture_score(self, move: bc.Move) -> int:
+        victim = self.board[move.destination]
         attacker = self.board[move.origin]
         if victim is None or attacker is None:
             return 0
         piece_values = {
-            bc.PAWN: 100, bc.KNIGHT: 320, bc.BISHOP: 330,
-            bc.ROOK: 500, bc.QUEEN: 900, bc.KING: 0,
+            bc.PAWN: 100,
+            bc.KNIGHT: 320,
+            bc.BISHOP: 330,
+            bc.ROOK: 500,
+            bc.QUEEN: 900,
+            bc.KING: 0,
         }
         return piece_values[victim.piece_type] - piece_values[attacker.piece_type]
 
-    def _move_tactical_score(self, move: bc.Move, best_move, ply: int) -> int:
-        score  = 0
+    def _move_tactical_score(self, move: bc.Move, best_move: bc.Move, ply: int) -> int:
+        score = 0
         killer = self.killer[ply] if ply < MAX_DEPTH else []
 
         if move == best_move:
             score += 1000
         if move in killer:
             score += 700
-        else:
-            score += self.see(move)
+
+        score += self.see(move)
         # if move.is_castling(self.board):
         #     score += 50
         if move.promotion:
@@ -341,15 +467,13 @@ class Searcher():
         score += self.history[move]
         return score
 
-
-    def _get_reduction(self, move: bc.Move, number: int, depth: int) -> int:
-        if number <= 5:
-            return 0
-        if self._gives_check(move):
+    
+    def _get_reduction(self, move:bc.Move, number:int, depth:int)->int:
+        if number <= 5 or depth <= 3:
             return 0
         if move.is_capture(self.board):
             return 0
-        if depth  <= 3:
+        if self._gives_check(move):
             return 0
         if number > 25:
             return depth - 1
@@ -360,24 +484,24 @@ class Searcher():
     def _terminal_score(self, ply: int) -> float:
         if self.board in bc.CHECKMATE:
             return -META + ply
+        if self.board in bc.THREEFOLD_REPETITION:
+            return -1
         return 0
 
-
     def _gives_check(self, move: bc.Move) -> bool:
-            self.board.apply(move)
-            result = self.board in bc.CHECK
-            self.board.undo()
-            return result
+        self.board.apply(move)
+        result = self.board in bc.CHECK
+        self.board.undo()
+        return result
 
-    
     def _has_pieces_left(self) -> bool:
         """True when the side to move has at least one piece beyond king/pawns."""
         us = self.board.turn
         non_pawn_pieces = (
-            self.board[us, bc.KNIGHT] |
-            self.board[us, bc.BISHOP] |
-            self.board[us, bc.ROOK] |
-            self.board[us, bc.QUEEN]
+            self.board[us, bc.KNIGHT]
+            | self.board[us, bc.BISHOP]
+            | self.board[us, bc.ROOK]
+            | self.board[us, bc.QUEEN]
         )
         return bool(non_pawn_pieces)
 
@@ -385,20 +509,20 @@ class Searcher():
 if __name__ == "__main__":
     import cProfile
     import pstats
-    
-    board = bc.Board()
-    def benchmark():
-        searcher = Searcher(board, Handcrafted)
-        print(searcher.search(10))
 
-    
+    board = bc.Board()
+    searcher = Searcher(board, NNEvaluation())
+
+    def benchmark():
+        print(searcher.search(7))
+
     profiler = cProfile.Profile()
     profiler.enable()
-    
+
     benchmark()
-    
+
     profiler.disable()
-    
+
     stats = pstats.Stats(profiler)
     stats.sort_stats("cumtime")
     stats.print_stats(25)

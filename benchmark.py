@@ -1,6 +1,8 @@
+from doctest import testsource
 import random
 import time
 
+from tensorflow.keras.models import load_model
 import cProfile
 import pstats
 from evaluation import Handcrafted, NNEvaluation
@@ -9,10 +11,10 @@ import bulletchess as bc
 
 ran = random.Random(42)
 
-def random_position(max_plies=20):
+def random_position(max_plies=40):
     board = bc.Board()
 
-    n = ran.randint(8, max_plies)
+    n = ran.randint(10, max_plies)
 
     for _ in range(n):
         if board in bc.MATE:
@@ -50,7 +52,7 @@ def game_benchmark(depth, eval):
     searcher = Searcher(board, eval)
     start = time.perf_counter()
     moves = 0
-    while not board.is_game_over():
+    while board not in bc.MATE:
         moves += 1
         _, move = searcher.search(depth)
         board.push(move)
@@ -71,10 +73,6 @@ def multi_fen_benchmark(depth, eval):
         "tt_lookups": 0,
         "beta_cutof": 0,
         "aspr_fail": 0,
-        "time_sort": 0.0,
-        "time_eval": 0.0,
-        "time_quiesce": 0.0,
-        "time_tt": 0.0,
     }
 
     for board in test_fens:
@@ -95,10 +93,6 @@ def multi_fen_benchmark(depth, eval):
         totals["tt_lookups"] += searcher.tt_lookups
         totals["beta_cutof"] += searcher.beta_cutof
         totals["aspr_fail"] += searcher.aspr_fail
-        totals["time_sort"] += searcher.time_sort
-        totals["time_eval"] += searcher.time_eval
-        totals["time_quiesce"] += searcher.time_quiesce
-        totals["time_tt"] += searcher.time_tt
 
         print(
             f"Best move: {move}  "
@@ -133,111 +127,111 @@ def multi_fen_benchmark(depth, eval):
     print(f"TT lookups   : {totals['tt_lookups'] / n:.1f}")
     print(f"Beta cutoffs : {totals['beta_cutof'] / n:.1f}")
     print(f"Aspiration fails : {totals['aspr_fail'] / n:.2f}")
-    print(f"Sort time    : {totals['time_sort'] / n:.4f} s")
-    print(f"Eval time    : {totals['time_eval'] / n:.4f} s")
-    print(f"Quiesce time : {totals['time_quiesce'] / n:.4f} s")
-    print(f"TT time      : {totals['time_tt'] / n:.4f} s")
 
     print()
     print("Moves:", moves)
 
-def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
-    pieces ={
-            chess.PAWN,
-            chess.ROOK,
-            chess.KNIGHT,
-            chess.BISHOP,
-            chess.QUEEN,
-            chess.KING
-        }
+
     
+def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
+    pieces = {
+        bc.PAWN,
+        bc.ROOK,
+        bc.KNIGHT,
+        bc.BISHOP,
+        bc.QUEEN,
+        bc.KING
+    }
+
     eval1_wins = 0
     eval2_wins = 0
     draws = 0
-    
+
     def pieces_count(board):
         white = {}
         black = {}
         for p in pieces:
-    
-            white[p] =   len(board.pieces(p, chess.WHITE))
-            black[p] = len(board.pieces(p, chess.BLACK))
+            white[p] = len(list(board[bc.WHITE, p]))
+            black[p] = len(list(board[bc.BLACK, p]))
         return white, black
-    
-    
-    test_pos = [random_position() for _ in range(games)]
+    test_pos = []
+    test_pos.append(bc.Board.from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"))
+    for _ in range(games - 1):
+        test_pos.append(random_position())
+
+    # Create the two searchers ONCE, tied to eval_fns[0] and eval_fns[1]
+    # respectively. We'll rebind their board each game rather than
+    # constructing new Searcher objects.
+    searcher1 = Searcher(test_pos[0], eval_fns[0])
+    searcher2 = Searcher(test_pos[0], eval_fns[1])
+
     for game_num in range(games):
         board = test_pos[game_num]
-    
+        print(f"Game {game_num + 1}/{board.fen()}")
+
+        # Point both persistent searchers at this game's board
+        searcher1.reset(board)
+        searcher2.reset(board)
+
         # Alternate colors
         if game_num % 2 == 0:
-            white_eval = eval_fns[0]()
-            black_eval = eval_fns[1]() 
+            white_searcher = searcher1
+            black_searcher = searcher2
             eval1_is_white = True
         else:
-            white_eval = eval_fns[1]()
-            black_eval = eval_fns[0]()
+            white_searcher = searcher2
+            black_searcher = searcher1
             eval1_is_white = False
-    
+
         move_count = 0
-        white_searcher = Searcher(board, white_eval)
-        black_searcher = Searcher(board, black_eval)
-        while not board.is_game_over():
-            if board.turn == chess.WHITE:
+        while board not in bc.MATE and board not in bc.DRAW:
+            if board.turn == bc.WHITE:
                 _, move = white_searcher.search(depth)
             else:
                 _, move = black_searcher.search(depth)
+
             if move is None:
+                print(f"no move found, breaking")
                 break
-    
-            board.push(move)
+            board.apply(move)
             move_count += 1
-    
-        outcome = board.outcome()
-    
-        if outcome is None or outcome.winner is None:
+
+        if board in bc.DRAW:
             draws += 1
-    
-            if outcome is None:
-                print("Unknown result")
-            elif outcome.winner is None:
-                print("Draw:", outcome.termination)
-                white, black = pieces_count(board)
-                eval1_count = white if eval1_is_white else black
-                eval2_count = black if eval1_is_white else white
-                print(f"eval1:{eval1_count}")
-                print(f"eval2:{eval2_count}")
-                print(f"fen: {board.fen()}")
-                print(f"white is eval1:{eval1_is_white}")
-                turn = "white" if board.turn == chess.WHITE else "black"
-                print(f"turn: {turn}")
-                print(f"eval1: {evaluate(board)}")
-                print(f"eval2: {evaluate2(board)}")
-    
-        elif outcome.winner == chess.WHITE:
-            if eval1_is_white:
-                eval1_wins += 1
-            else:
-                eval2_wins += 1
-    
-        else:  # Black won
-            if eval1_is_white:
-                eval2_wins += 1
-            else:
-                eval1_wins += 1
-    
+            white, black = pieces_count(board)
+            eval1_count = white if eval1_is_white else black
+            eval2_count = black if eval1_is_white else white
+            print(f"eval1:{eval1_count}")
+            print(f"eval2:{eval2_count}")
+            print(f"fen: {board.fen()}")
+            print(f"white is eval1:{eval1_is_white}")
+            turn = "white" if board.turn == bc.WHITE else "black"
+            print(f"turn: {turn}")
+
+        elif board in bc.CHECKMATE:
+            if board.turn == bc.BLACK:  # White delivered checkmate
+                if eval1_is_white:
+                    eval1_wins += 1
+                else:
+                    eval2_wins += 1
+            else:  # Black delivered checkmate
+                if eval1_is_white:
+                    eval2_wins += 1
+                else:
+                    eval1_wins += 1
+
         print(
             f"Game {game_num + 1}/{games} | "
             f"Eval1: {eval1_wins}  "
             f"Eval2: {eval2_wins}  "
             f"Draws: {draws}"
         )
-    
+
     print("\nFINAL RESULTS")
     print("Eval1 wins:", eval1_wins)
     print("Eval2 wins:", eval2_wins)
     print("Draws:", draws)
-    
+
     total_decisive = eval1_wins + eval2_wins
     if total_decisive:
         print(
@@ -250,5 +244,5 @@ def eval_vs_eval2(depth, games, eval_fns=[Handcrafted, NNEvaluation]):
             round((eval2_wins + draws * 0.5) / games * 100, 1),
             "%"
         )
-
-single_move_benchmark(7, Handcrafted)
+# single_move_benchmark(7, Handcrafted)
+eval_vs_eval2(5, 500, [NNEvaluation(), Handcrafted()])

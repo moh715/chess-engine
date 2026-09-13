@@ -15,32 +15,42 @@ class SEEEvaluator:
     def __init__(self, board: bc.Board, piece_values: dict = None):
         self.board = board
         self.pieces_values = piece_values or self.PIECE_VALUES
-        self._cache = {}
-        self.hits = 0
  
-    def see(self, move: bc.Move, assume_legal: bool = False) -> int:
-        key = (self.board, move)
-        if key in self._cache:
-            return self._cache[key]
-        if not move.is_capture(self.board):
-            self._cache[key] = 0
-            return 0
-        gain = self.pieces_values[self.board[move.destination].piece_type]
-        us = self.board.turn
-        played = 1
-        self.board.apply(move)
-        while True:
-            moves = [m for m in self.board.legal_moves() if m.destination == move.destination]
-            if not moves:
-                break
-            played += 1
-            next_move = min(moves, key=lambda m: self.pieces_values[self.board[m.origin].piece_type])
-            gain += self.pieces_values[self.board[next_move.origin].piece_type] if self.board.turn == us else -self.pieces_values[self.board[next_move.origin].piece_type]
-            self.board.apply(next_move)
-        for _ in range(played):    
-            self.board.undo()
-        self._cache[key] = gain
-        return gain
+    def see(self, move: bc.Move) -> int:
+            if not move.is_capture(self.board):
+                return 0
+                
+            board = self.board.copy()  # never mutate the live search board
+            
+            # 1. Determine the value of the initially captured piece
+            captured = board[move.destination]
+            if captured is None:
+                # en passant: captured pawn sits beside the destination, not on it
+                captured_square = move.destination.south() if board.turn == bc.WHITE else move.destination.north()
+                captured = board[captured_square]
+                
+            gain = self.pieces_values[captured.piece_type]
+            us = self.board.turn
+            
+            board.apply(move)
+            
+            while True:
+                moves = [m for m in board.legal_moves() if m.destination == move.destination]
+                if not moves:
+                    break
+                    
+                next_move = min(moves, key=lambda m: self.pieces_values[board[m.origin].piece_type])
+                
+                captured_val = self.pieces_values[board[move.destination].piece_type]
+                
+                if board.turn == us:
+                    gain += captured_val
+                else:
+                    gain -= captured_val
+                    
+                board.apply(next_move)
+                
+            return gain
 
         
 if __name__ == "__main__":
