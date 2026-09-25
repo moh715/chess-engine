@@ -1,3 +1,4 @@
+
 # search_bench.py
 """
 A/B benchmark harness for the Searcher.
@@ -691,99 +692,40 @@ if __name__ == "__main__":
 
     import heapq
     class UesefastSEE(Searcher):
-        def quiesce(self, alpha: float, beta: float, ply: int) -> float:
-            if self._out_of_time():  # --- time management ---
-                return 0
-            self.nodes += 1
-            if self.board in bc.MATE:
-                return self._terminal_score(ply)
-    
-            key = hash(self.board)
-            cached = self._tt_lookup(key, 0, alpha, beta, False)
-    
-            if cached is not None:
-                return cached
-    
-            orig_alpha = alpha
-            pv = self.pieces_values
-    
-            if self.board in bc.CHECK:
-                best_value = float("-inf")
-                moves = self.board.legal_moves()
-            else:
-                    
-                    
-                stand_pat = self.evaluate()
-                
-                if stand_pat >= beta:
-                    return stand_pat
-    
-                alpha = max(alpha, stand_pat)
-                best_value = stand_pat
-    
-                if stand_pat + self.evaluate.queen < alpha:
-                    self._cache(key, 0, best_value, None, orig_alpha, beta, False)
-                    return best_value
-    
-                moves = []
-                for move in self.board.legal_moves():
-                    if not (move.is_capture(self.board) or move.promotion):
-                        continue
-    
-                    victim = self.board[move.destination]
-                    gain = pv[victim.piece_type] if victim else 0
-                    if move.promotion:
-                        gain += pv[move.promotion]
-    
-                    if stand_pat + gain + 200 < alpha:
-                        continue
-                    if self.see(move) < 0:
-                        continue
-                    moves.append(move)
-    
-            entry = self.tt.get(key)
-            best = entry[1] if entry else None
-            moves = [
-                (-self._move_tactical_score(m, best, ply), i, m)
-                for i, m in enumerate(moves)
-            ]
-            heapq.heapify(moves)
-    
-            best_move = None
-            first_move = True
-            while moves:
-                _, _, move = moves[0]
-    
-                self.evaluate.do(move)
-                self.board.apply(move)
-                if first_move:
-                    value = -self.quiesce(-beta, -alpha, ply + 1)
-                    first_move = False
-                else:
-                    value = -self.quiesce(-alpha - 1, -alpha, ply + 1)
-                    # --- time management: don't start a re-search if we're aborting ---
-                    if alpha < value < beta and not self.stop:
-                        value = -self.quiesce(-beta, -alpha, ply + 1)
-                self.board.undo()
-                self.evaluate.undo()
-    
-                if self.stop:  # --- time management: unwind, discard value ---
-                    break
-    
-                if value > best_value:
-                    best_value = value
-                    best_move = move
-                    alpha = max(alpha, best_value)
-    
-                if alpha >= beta:
-                    self.beta_cutof += 1
-                    break
-                heapq.heappop(moves)
-            self._cache(key, 0, best_value, best_move, orig_alpha, beta, False)
-    
-            return best_value
+                      
+        def __init__(self, board: bc.Board, evaluation: Evaluation):
+            self.board = board
+            self.evaluate = evaluation
+            self.evaluate.set_board(board)
+            self.seee = FastSEE(board)
+            self.see = self.seee.see
+            self.tt = {}
+            self.qtt = {}
+            self.killer = [[None, None] for _ in range(MAX_DEPTH)]
+            self.history = defaultdict(int)
+            self.WINDOW_MARGIN = self.evaluate.window_margin
+            self.pieces_values = {
+                bc.PAWN: 100,
+                bc.KNIGHT: 320,
+                bc.BISHOP: 300,
+                bc.ROOK: 500,
+                bc.QUEEN: 900,
+                bc.KING: 100,
+            }
+            self.nodes = 0
+            self.tt_hits = 0
+            self.tt_lookups = 0
+            self.beta_cutof = 0
+            self.aspr_fail = 0
+            self.last_depth = 0
             
+        # --- time management ---
+            self.time_limit = None  # seconds; None = unlimited
+            self.start_time = 0.0
+            self.stop = False
+            self._tick = 0
+
     result = compare_search(candidate=UesefastSEE, depth=5, runs=7,
-                            label_a="see ordering", label_b="MVVLVA in ordering", evaluation=NNEvaluation)
+                            label_a="normal see", label_b="fast see", evaluation=NNEvaluation)
     print("significant:", result["summary"]["significant"])
     print("time change:", round(result["summary"]["pct"] or 0.0, 1), "%")

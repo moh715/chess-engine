@@ -61,6 +61,18 @@ class Searcher:
                 self.stop = True
         return self.stop
 
+        
+    def set_board(self, board: bc.Board):
+        """Rebind to a new board WITHOUT clearing caches.
+        Use for `position` updates within a game; use reset() (which
+        clears TT/killers/history) only for ucinewgame."""
+        self.board = board
+        self.evaluate.set_board(board)
+        self.seee = SEEEvaluator(board)
+        self.see = self.seee.see
+        self.stop = False
+        self.time_limit = None
+        
     @staticmethod
     def time_for_move(remaining: float, increment: float = 0.0) -> float:
         """Convert a game clock (seconds) into a per-move budget (seconds)."""
@@ -271,101 +283,102 @@ class Searcher:
         return best_value
 
     def quiesce(self, alpha: float, beta: float, ply: int) -> float:
-        if self._out_of_time():  # --- time management ---
-            return 0
-        self.nodes += 1
-        if self.board in bc.MATE:
-            return self._terminal_score(ply)
-
-        key = hash(self.board)
-        cached = self._tt_lookup(key, 0, alpha, beta, False)
-
-        if cached is not None:
-            return cached
-
-        orig_alpha = alpha
-        pv = self.pieces_values
-
-        if self.board in bc.CHECK:
-            best_value = float("-inf")
-            moves = self.board.legal_moves()
-        else:
-            stand_pat = self.evaluate()
-
-            if stand_pat >= beta:
-                return stand_pat
-
-            alpha = max(alpha, stand_pat)
-            best_value = stand_pat
-
-            if stand_pat + self.evaluate.queen < alpha:
-                self._cache(key, 0, best_value, None, orig_alpha, beta, False)
+                if self._out_of_time():  # --- time management ---
+                    return 0
+                self.nodes += 1
+                if self.board in bc.MATE:
+                    return self._terminal_score(ply)
+        
+                key = hash(self.board)
+                cached = self._tt_lookup(key, 0, alpha, beta, False)
+        
+                if cached is not None:
+                    return cached
+        
+                orig_alpha = alpha
+                pv = self.pieces_values
+        
+                if self.board in bc.CHECK:
+                    best_value = float("-inf")
+                    moves = self.board.legal_moves()
+                else:
+                        
+                        
+                    stand_pat = self.evaluate()
+                    
+                    if stand_pat >= beta:
+                        return stand_pat
+        
+                    alpha = max(alpha, stand_pat)
+                    best_value = stand_pat
+        
+                    if stand_pat + self.evaluate.queen < alpha:
+                        self._cache(key, 0, best_value, None, orig_alpha, beta, False)
+                        return best_value
+        
+                    moves = []
+                    for move in self.board.legal_moves():
+                        if not (move.is_capture(self.board) or move.promotion):
+                            continue
+        
+                        victim = self.board[move.destination]
+                        gain = pv[victim.piece_type] if victim else 0
+                        if move.promotion:
+                            gain += pv[move.promotion]
+        
+                        if stand_pat + gain + 200 < alpha:
+                            continue
+                        if self.see(move) < 0:
+                            continue
+                        moves.append(move)
+        
+                entry = self.tt.get(key)
+                best = entry[1] if entry else None
+                moves = [
+                    (-self._move_tactical_score(m, best, ply), i, m)
+                    for i, m in enumerate(moves)
+                ]
+                heapq.heapify(moves)
+        
+                best_move = None
+                first_move = True
+                while moves:
+                    _, _, move = moves[0]
+        
+                    self.evaluate.do(move)
+                    self.board.apply(move)
+                    if first_move:
+                        value = -self.quiesce(-beta, -alpha, ply + 1)
+                        first_move = False
+                    else:
+                        value = -self.quiesce(-alpha - 1, -alpha, ply + 1)
+                        # --- time management: don't start a re-search if we're aborting ---
+                        if alpha < value < beta and not self.stop:
+                            value = -self.quiesce(-beta, -alpha, ply + 1)
+                    self.board.undo()
+                    self.evaluate.undo()
+        
+                    if self.stop:  # --- time management: unwind, discard value ---
+                        break
+        
+                    if value > best_value:
+                        best_value = value
+                        best_move = move
+                        alpha = max(alpha, best_value)
+        
+                    if alpha >= beta:
+                        self.beta_cutof += 1
+                        break
+                    heapq.heappop(moves)
+                self._cache(key, 0, best_value, best_move, orig_alpha, beta, False)
+        
                 return best_value
-
-            moves = []
-            for move in self.board.legal_moves():
-                
-                if not (move.is_capture(self.board) or move.promotion):
-                    continue
-
-                victim = self.board[move.destination]
-                gain = pv[victim.piece_type] if victim else 0
-                if move.promotion:
-                    gain += pv[move.promotion]
-                
-                if stand_pat + gain + self.WINDOW_MARGIN * 2 < alpha:
-                    continue
-                if self.see(move) < 0:
-                    continue
-                moves.append(move)
-
-        entry = self.tt.get(key)
-        best = entry[1] if entry else None
-        moves = [
-            (-self._move_tactical_score(m, best, ply), i, m)
-            for i, m in enumerate(moves)
-        ]
-        heapq.heapify(moves)
-
-        best_move = None
-        first_move = True
-        while moves:
-            _, _, move = moves[0]
-
-            self.evaluate.do(move)
-            self.board.apply(move)
-            if first_move:
-                value = -self.quiesce(-beta, -alpha, ply + 1)
-                first_move = False
-            else:
-                value = -self.quiesce(-alpha - 1, -alpha, ply + 1)
-                # --- time management: don't start a re-search if we're aborting ---
-                if alpha < value < beta and not self.stop:
-                    value = -self.quiesce(-beta, -alpha, ply + 1)
-            self.board.undo()
-            self.evaluate.undo()
-
-            if self.stop:  # --- time management: unwind, discard value ---
-                break
-
-            if value > best_value:
-                best_value = value
-                best_move = move
-                alpha = max(alpha, best_value)
-
-            if alpha >= beta:
-                self.beta_cutof += 1
-                break
-            heapq.heappop(moves)
-        self._cache(key, 0, best_value, best_move, orig_alpha, beta, False)
-
-        return best_value
 
     def reset(self, board: bc.Board):
         """Rebind this searcher to a new game/board, clearing all per-game state."""
         self.board = board
         self.evaluate.set_board(board)
-        self.seee = SEEEEvaluator(board)
+        self.seee = SEEEvaluator(board)
         self.see = self.seee.see
 
         self.tt.clear()
